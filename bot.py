@@ -2,6 +2,8 @@ import os
 import requests
 from datetime import datetime
 import pytz
+import time
+import schedule
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -27,8 +29,7 @@ COUNTRY_FLAGS = {
     "India": "🇮🇳", "Ecuador": "🇪🇨", "Paraguay": "🇵🇾",
     "Bolivia": "🇧🇴", "Peru": "🇵🇪", "Venezuela": "🇻🇪",
     "Costa Rica": "🇨🇷", "Panama": "🇵🇦", "Honduras": "🇭🇳",
-    "Guatemala": "🇬🇹", "World": "🌍", "Europe": "🇪🇺",
-    "South America": "🌎", "Africa": "🌍", "Asia": "🌏",
+    "World": "🌍", "Europe": "🇪🇺",
 }
 
 def get_flag(country):
@@ -67,7 +68,6 @@ def get_odds(fixture_id):
 def analyze_and_send():
     fixtures = get_fixtures()
     selections = []
-
     for f in fixtures:
         if len(selections) >= 10:
             break
@@ -93,25 +93,27 @@ def analyze_and_send():
 
     selections.sort(key=lambda x: x["odd"])
     selections = selections[:10]
-
     avg_odd = sum(s["odd"] for s in selections) / len(selections)
     casa = "🟢 STAKE" if len(selections) > 5 else "🔵 1XBET"
 
     msg = f"🎯 <b>IVANPICKS - Picks del día</b>\n"
     msg += f"📅 {datetime.now(pytz.timezone('America/Argentina/Buenos_Aires')).strftime('%d/%m/%Y')}\n"
     msg += f"🏦 Casa recomendada: {casa}\n\n"
-
     for i, s in enumerate(selections, 1):
         msg += f"<b>Pick {i}</b>\n"
         msg += f"⚽ {s['match']}\n"
         msg += f"🏆 {s['league']}\n"
         msg += f"✅ Apuesta: {s['bet']}\n"
         msg += f"💰 Cuota: {s['odd']}\n\n"
-
     msg += f"📊 Cuota promedio: {avg_odd:.2f}\n"
     msg += "⚠️ Apostá con responsabilidad."
-
     send_telegram(msg)
 
-if __name__ == "__main__":
-    analyze_and_send()
+schedule.every().day.at("03:00").do(analyze_and_send)
+
+send_telegram("✅ IvanPicks bot iniciado correctamente!")
+analyze_and_send()
+
+while True:
+    schedule.run_pending()
+    time.sleep(60)
