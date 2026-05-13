@@ -10,56 +10,22 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 
-COUNTRY_FLAGS = {
-    "Argentina": "\U0001f1e6\U0001f1f7",
-    "Brazil": "\U0001f1e7\U0001f1f7",
-    "England": "\U0001f3f4",
-    "Spain": "\U0001f1ea\U0001f1f8",
-    "Germany": "\U0001f1e9\U0001f1ea",
-    "France": "\U0001f1eb\U0001f1f7",
-    "Italy": "\U0001f1ee\U0001f1f9",
-    "Portugal": "\U0001f1f5\U0001f1f9",
-    "Netherlands": "\U0001f1f3\U0001f1f1",
-    "Belgium": "\U0001f1e7\U0001f1ea",
-    "Uruguay": "\U0001f1fa\U0001f1fe",
-    "Chile": "\U0001f1e8\U0001f1f1",
-    "Colombia": "\U0001f1e8\U0001f1f4",
-    "Mexico": "\U0001f1f2\U0001f1fd",
-    "USA": "\U0001f1fa\U0001f1f8",
-    "Japan": "\U0001f1ef\U0001f1f5",
-    "South Korea": "\U0001f1f0\U0001f1f7",
-    "Turkey": "\U0001f1f9\U0001f1f7",
-    "Greece": "\U0001f1ec\U0001f1f7",
-    "Poland": "\U0001f1f5\U0001f1f1",
-    "Croatia": "\U0001f1ed\U0001f1f7",
-    "Switzerland": "\U0001f1e8\U0001f1ed",
-    "Denmark": "\U0001f1e9\U0001f1f0",
-    "Sweden": "\U0001f1f8\U0001f1ea",
-    "Norway": "\U0001f1f3\U0001f1f4",
-    "Ukraine": "\U0001f1fa\U0001f1e6",
-    "Morocco": "\U0001f1f2\U0001f1e6",
-    "Egypt": "\U0001f1ea\U0001f1ec",
-    "Nigeria": "\U0001f1f3\U0001f1ec",
-    "Ecuador": "\U0001f1ea\U0001f1e8",
-    "Paraguay": "\U0001f1f5\U0001f1fe",
-    "Peru": "\U0001f1f5\U0001f1ea",
-    "Venezuela": "\U0001f1fb\U0001f1ea",
-}
-
-def get_flag(country):
-    return COUNTRY_FLAGS.get(country, "")
-
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"})
+    r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"})
+    print(f"Telegram: {r.status_code} - {r.text[:100]}")
+    return r
 
 def get_fixtures():
     today = datetime.now(pytz.timezone("America/Argentina/Buenos_Aires")).strftime("%Y-%m-%d")
+    print(f"Buscando partidos para: {today}")
     url = "https://v3.football.api-sports.io/fixtures"
     headers = {"x-apisports-key": API_FOOTBALL_KEY}
     params = {"date": today, "status": "NS"}
     r = requests.get(url, headers=headers, params=params)
-    return r.json().get("response", [])
+    data = r.json().get("response", [])
+    print(f"Partidos encontrados: {len(data)}")
+    return data
 
 def get_odds(fixture_id):
     url = "https://v3.football.api-sports.io/odds"
@@ -80,6 +46,7 @@ def get_odds(fixture_id):
         return None
 
 def analyze_and_send():
+    print("Iniciando analisis...")
     fixtures = get_fixtures()
     selections = []
     for f in fixtures:
@@ -90,15 +57,16 @@ def analyze_and_send():
         away = f["teams"]["away"]["name"]
         league = f["league"]["name"]
         country = f["league"]["country"]
-        flag = get_flag(country)
         odd = get_odds(fid)
         if odd and float(odd["odd"]) <= 1.60:
             selections.append({
                 "match": f"{home} vs {away}",
-                "league": f"{flag} {country} - {league}",
+                "league": f"{country} - {league}",
                 "bet": odd["value"],
                 "odd": float(odd["odd"])
             })
+
+    print(f"Selecciones encontradas: {len(selections)}")
 
     if not selections:
         send_telegram("Hoy no hay picks con probabilidad suficiente.")
@@ -122,9 +90,13 @@ def analyze_and_send():
     msg += "Aposta con responsabilidad."
     send_telegram(msg)
 
-schedule.every().day.at("03:00").do(analyze_and_send)
+print("Bot iniciando...")
+print(f"Token: {TELEGRAM_TOKEN[:15] if TELEGRAM_TOKEN else 'NO TOKEN'}")
+print(f"Chat ID: {TELEGRAM_CHAT_ID}")
 send_telegram("Bot IvanPicks iniciado!")
 analyze_and_send()
+
+schedule.every().day.at("03:00").do(analyze_and_send)
 
 while True:
     schedule.run_pending()
