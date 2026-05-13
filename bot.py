@@ -8,44 +8,31 @@ import schedule
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
+API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 
-COUNTRY_FLAGS = {
-    "Argentina": "\U0001f1e6\U0001f1f7",
-    "Brazil": "\U0001f1e7\U0001f1f7",
-    "England": "\U0001f3f4",
-    "Spain": "\U0001f1ea\U0001f1f8",
-    "Germany": "\U0001f1e9\U0001f1ea",
-    "France": "\U0001f1eb\U0001f1f7",
-    "Italy": "\U0001f1ee\U0001f1f9",
-    "Portugal": "\U0001f1f5\U0001f1f9",
-    "Netherlands": "\U0001f1f3\U0001f1f1",
-    "USA": "\U0001f1fa\U0001f1f8",
-    "Mexico": "\U0001f1f2\U0001f1fd",
-    "Chile": "\U0001f1e8\U0001f1f1",
-    "Colombia": "\U0001f1e8\U0001f1f4",
-    "Uruguay": "\U0001f1fa\U0001f1fe",
-    "Turkey": "\U0001f1f9\U0001f1f7",
-    "Greece": "\U0001f1ec\U0001f1f7",
-    "Japan": "\U0001f1ef\U0001f1f5",
-    "Australia": "\U0001f1e6\U0001f1fa",
+TZ = pytz.timezone("America/Argentina/Buenos_Aires")
+
+LEAGUE_INFO = {
+    "soccer_epl": ("\U0001f3f4", "Premier League", "ENG"),
+    "soccer_spain_la_liga": ("\U0001f1ea\U0001f1f8", "La Liga", "ESP"),
+    "soccer_germany_bundesliga": ("\U0001f1e9\U0001f1ea", "Bundesliga", "GER"),
+    "soccer_italy_serie_a": ("\U0001f1ee\U0001f1f9", "Serie A", "ITA"),
+    "soccer_france_ligue_one": ("\U0001f1eb\U0001f1f7", "Ligue 1", "FRA"),
+    "soccer_uefa_champs_league": ("\U00002b50", "Champions League", "EUR"),
+    "soccer_uefa_europa_league": ("\U0001f7e0", "Europa League", "EUR"),
+    "soccer_argentina_primera_division": ("\U0001f1e6\U0001f1f7", "Liga Argentina", "ARG"),
+    "soccer_brazil_campeonato": ("\U0001f1e7\U0001f1f7", "Brasileirao", "BRA"),
+    "soccer_mexico_ligamx": ("\U0001f1f2\U0001f1fd", "Liga MX", "MEX"),
+    "soccer_usa_mls": ("\U0001f1fa\U0001f1f8", "MLS", "USA"),
+    "soccer_portugal_primeira_liga": ("\U0001f1f5\U0001f1f9", "Primeira Liga", "POR"),
+    "soccer_netherlands_eredivisie": ("\U0001f1f3\U0001f1f1", "Eredivisie", "NED"),
+    "soccer_turkey_super_league": ("\U0001f1f9\U0001f1f7", "Super Lig", "TUR"),
+    "soccer_chile_campeonato": ("\U0001f1e8\U0001f1f1", "Primera Division Chile", "CHI"),
+    "soccer_colombia_primera_a": ("\U0001f1e8\U0001f1f4", "Liga Colombia", "COL"),
+    "soccer_uruguay_primera_division": ("\U0001f1fa\U0001f1fe", "Primera Division Uruguay", "URU"),
 }
 
-LEAGUE_FLAGS = {
-    "soccer_epl": ("\U0001f3f4", "Premier League"),
-    "soccer_spain_la_liga": ("\U0001f1ea\U0001f1f8", "La Liga"),
-    "soccer_germany_bundesliga": ("\U0001f1e9\U0001f1ea", "Bundesliga"),
-    "soccer_italy_serie_a": ("\U0001f1ee\U0001f1f9", "Serie A"),
-    "soccer_france_ligue_one": ("\U0001f1eb\U0001f1f7", "Ligue 1"),
-    "soccer_uefa_champs_league": ("\U0001f1ea\U0001f1fa", "Champions League"),
-    "soccer_uefa_europa_league": ("\U0001f1ea\U0001f1fa", "Europa League"),
-    "soccer_argentina_primera_division": ("\U0001f1e6\U0001f1f7", "Liga Argentina"),
-    "soccer_brazil_campeonato": ("\U0001f1e7\U0001f1f7", "Brasileirao"),
-    "soccer_mexico_ligamx": ("\U0001f1f2\U0001f1fd", "Liga MX"),
-    "soccer_usa_mls": ("\U0001f1fa\U0001f1f8", "MLS"),
-    "soccer_portugal_primeira_liga": ("\U0001f1f5\U0001f1f9", "Primeira Liga"),
-    "soccer_netherlands_eredivisie": ("\U0001f1f3\U0001f1f1", "Eredivisie"),
-    "soccer_turkey_super_league": ("\U0001f1f9\U0001f1f7", "Super Lig"),
-}
+sent_picks = set()
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -57,99 +44,176 @@ def send_telegram(message):
     print(f"Telegram: {r.status_code}")
     return r
 
-def get_sports():
-    url = "https://api.the-odds-api.com/v4/sports"
-    params = {"apiKey": ODDS_API_KEY}
-    r = requests.get(url, params=params)
-    return [s["key"] for s in r.json() if s.get("group") == "Soccer" and s.get("active")]
+def get_team_stats(team_name, league_id, season=2024):
+    try:
+        url = "https://v3.football.api-sports.io/teams/statistics"
+        headers = {"x-apisports-key": API_FOOTBALL_KEY}
+        params = {"team": team_name, "league": league_id, "season": season}
+        r = requests.get(url, headers=headers, params=params)
+        return r.json().get("response", {})
+    except:
+        return {}
 
-def get_odds_for_sport(sport_key):
-    url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-    params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": "eu",
-        "markets": "h2h",
-        "oddsFormat": "decimal",
-        "bookmakers": "stake,betway,unibet"
-    }
-    r = requests.get(url, params=params)
-    if r.status_code != 200:
+def get_h2h(home_team, away_team):
+    try:
+        url = "https://v3.football.api-sports.io/fixtures/headtohead"
+        headers = {"x-apisports-key": API_FOOTBALL_KEY}
+        params = {"h2h": f"{home_team}-{away_team}", "last": 10}
+        r = requests.get(url, headers=headers, params=params)
+        return r.json().get("response", [])
+    except:
         return []
-    return r.json()
 
-def analyze_and_send():
-    print("Iniciando analisis...")
-    tz = pytz.timezone("America/Argentina/Buenos_Aires")
-    today = datetime.now(tz).strftime("%Y-%m-%d")
-    print(f"Fecha: {today}")
+def calculate_probability(home, away, sport_key):
+    score = 50
+    flag, league_name, _ = LEAGUE_INFO.get(sport_key, ("", sport_key, ""))
 
-    sports = list(LEAGUE_FLAGS.keys())
-    all_selections = []
+    # Análisis H2H
+    h2h = get_h2h(home, away)
+    if h2h:
+        home_wins = sum(1 for g in h2h if g["teams"]["home"]["name"] == home and g["teams"]["home"]["winner"])
+        away_wins = sum(1 for g in h2h if g["teams"]["away"]["name"] == away and g["teams"]["away"]["winner"])
+        total_goals = sum(g["goals"]["home"] + g["goals"]["away"] for g in h2h if g["goals"]["home"] is not None)
+        avg_goals = total_goals / len(h2h) if h2h else 2.5
 
-    for sport_key in sports:
-        games = get_odds_for_sport(sport_key)
-        flag, league_name = LEAGUE_FLAGS.get(sport_key, ("", sport_key))
+        # Ajustar probabilidad según H2H
+        if home_wins > away_wins:
+            score += 10
+        if avg_goals > 2.5:
+            score += 5
+        if avg_goals < 2.0:
+            score -= 5
 
-        for game in games:
-            game_time = game.get("commence_time", "")
-            if today not in game_time:
+    return min(score, 95)
+
+def analyze_match(home, away, sport_key, bookmakers):
+    flag, league_name, _ = LEAGUE_INFO.get(sport_key, ("\U0001f3c6", sport_key, ""))
+    prob = calculate_probability(home, away, sport_key)
+
+    picks = []
+
+    for bm in bookmakers:
+        for market in bm.get("markets", []):
+            key = market["key"]
+            for outcome in market["outcomes"]:
+                odd = float(outcome["price"])
+                name = outcome["name"]
+
+                # Calcular valor esperado
+                implied_prob = 1 / odd * 100
+                value = prob - implied_prob
+
+                # Solo picks con buena probabilidad y valor
+                if odd >= 1.40 and odd <= 2.20 and implied_prob >= 45:
+                    picks.append({
+                        "match": f"{home} vs {away}",
+                        "league": f"{flag} {league_name}",
+                        "market": key,
+                        "bet": name,
+                        "odd": odd,
+                        "prob": round(implied_prob, 1),
+                        "value": round(value, 1)
+                    })
+
+    # Ordenar por probabilidad
+    picks.sort(key=lambda x: x["prob"], reverse=True)
+    return picks[:2] if picks else []
+
+def get_todays_picks():
+    today = datetime.now(TZ).strftime("%Y-%m-%d")
+    print(f"Analizando partidos para: {today}")
+
+    all_picks = []
+
+    for sport_key in LEAGUE_INFO.keys():
+        try:
+            url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
+            params = {
+                "apiKey": ODDS_API_KEY,
+                "regions": "eu",
+                "markets": "h2h,totals,btts",
+                "oddsFormat": "decimal",
+            }
+            r = requests.get(url, params=params)
+            if r.status_code != 200:
                 continue
 
-            home = game.get("home_team", "")
-            away = game.get("away_team", "")
-            bookmakers = game.get("bookmakers", [])
+            games = r.json()
+            for game in games:
+                if today not in game.get("commence_time", ""):
+                    continue
+                home = game["home_team"]
+                away = game["away_team"]
+                picks = analyze_match(home, away, sport_key, game.get("bookmakers", []))
+                all_picks.extend(picks)
+        except Exception as e:
+            print(f"Error {sport_key}: {e}")
+            continue
 
-            best_odd = None
-            best_outcome = None
+    # Ordenar por probabilidad y eliminar duplicados
+    all_picks.sort(key=lambda x: x["prob"], reverse=True)
+    unique = []
+    seen = set()
+    for p in all_picks:
+        key = f"{p['match']}-{p['bet']}"
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
 
-            for bm in bookmakers:
-                for market in bm.get("markets", []):
-                    if market["key"] == "h2h":
-                        for outcome in market["outcomes"]:
-                            odd = float(outcome["price"])
-                            if odd <= 1.60:
-                                if best_odd is None or odd < best_odd:
-                                    best_odd = odd
-                                    best_outcome = outcome["name"]
+    return unique[:10]
 
-            if best_odd and best_outcome:
-                all_selections.append({
-                    "match": f"{home} vs {away}",
-                    "league": f"{flag} {league_name}",
-                    "bet": best_outcome,
-                    "odd": best_odd
-                })
-
-    print(f"Selecciones encontradas: {len(all_selections)}")
-
-    if not all_selections:
-        send_telegram("Hoy no hay picks con probabilidad suficiente.")
+def send_picks(picks, title="Picks del dia"):
+    if not picks:
+        print("No hay picks suficientes")
         return
 
-    all_selections.sort(key=lambda x: x["odd"])
-    selections = all_selections[:10]
-    avg_odd = sum(s["odd"] for s in selections) / len(selections)
-    casa = "STAKE" if len(selections) > 5 else "1XBET"
+    # Verificar si ya se enviaron
+    new_picks = [p for p in picks if f"{p['match']}-{p['bet']}" not in sent_picks]
+    if not new_picks:
+        print("No hay picks nuevos")
+        return
 
-    msg = "<b>IVANPICKS - Picks del dia</b>\n"
-    msg += f"Fecha: {datetime.now(tz).strftime('%d/%m/%Y')}\n"
-    msg += f"Casa recomendada: {casa}\n\n"
-    for i, s in enumerate(selections, 1):
+    casa = "\U0001f7e2 STAKE" if len(new_picks) > 5 else "\U0001f535 1XBET"
+    msg = f"\U0001f3af <b>IVANPICKS - {title}</b>\n"
+    msg += f"\U0001f4c5 {datetime.now(TZ).strftime('%d/%m/%Y %H:%M')}\n"
+    msg += f"\U0001f3e6 Casa recomendada: {casa}\n\n"
+
+    for i, p in enumerate(new_picks, 1):
         msg += f"<b>Pick {i}</b>\n"
-        msg += f"Partido: {s['match']}\n"
-        msg += f"Liga: {s['league']}\n"
-        msg += f"Apuesta: {s['bet']}\n"
-        msg += f"Cuota: {s['odd']}\n\n"
-    msg += f"Cuota promedio: {avg_odd:.2f}\n"
-    msg += "Aposta con responsabilidad."
+        msg += f"\u26bd {p['match']}\n"
+        msg += f"\U0001f3c6 {p['league']}\n"
+        msg += f"\u2705 Apuesta: {p['bet']}\n"
+        msg += f"\U0001f4b0 Cuota: {p['odd']}\n"
+        msg += f"\U0001f4ca Probabilidad: {p['prob']}%\n\n"
+
+    msg += "\u26a0\ufe0f Aposta con responsabilidad."
     send_telegram(msg)
-    print("Picks enviados!")
 
-print("Bot iniciando...")
-send_telegram("Bot IvanPicks iniciado!")
-analyze_and_send()
+    # Marcar como enviados
+    for p in new_picks:
+        sent_picks.add(f"{p['match']}-{p['bet']}")
 
-schedule.every().day.at("03:00").do(analyze_and_send)
+def daily_analysis():
+    print("Analisis diario 00:00...")
+    sent_picks.clear()
+    picks = get_todays_picks()
+    send_picks(picks, "Picks del dia")
+
+def check_new_opportunities():
+    print("Revisando nuevas oportunidades...")
+    picks = get_todays_picks()
+    new = [p for p in picks if f"{p['match']}-{p['bet']}" not in sent_picks]
+    if new:
+        send_picks(new[:5], "Nueva oportunidad detectada!")
+
+# Arranque inicial
+print("Bot IvanPicks iniciando...")
+send_telegram("\U0001f916 Bot IvanPicks iniciado y activo!")
+daily_analysis()
+
+# Programar tareas
+schedule.every().day.at("03:00").do(daily_analysis)  # 00:00 Argentina = 03:00 UTC
+schedule.every(2).hours.do(check_new_opportunities)
 
 while True:
     schedule.run_pending()
