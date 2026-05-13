@@ -11,29 +11,43 @@ API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 
 COUNTRY_FLAGS = {
-    "Argentina": "🇦🇷", "Brazil": "🇧🇷", "England": "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
-    "Spain": "🇪🇸", "Germany": "🇩🇪", "France": "🇫🇷",
-    "Italy": "🇮🇹", "Portugal": "🇵🇹", "Netherlands": "🇳🇱",
-    "Belgium": "🇧🇪", "Uruguay": "🇺🇾", "Chile": "🇨🇱",
-    "Colombia": "🇨🇴", "Mexico": "🇲🇽", "USA": "🇺🇸",
-    "Japan": "🇯🇵", "South Korea": "🇰🇷", "Australia": "🇦🇺",
-    "Turkey": "🇹🇷", "Greece": "🇬🇷", "Russia": "🇷🇺",
-    "Poland": "🇵🇱", "Croatia": "🇭🇷", "Serbia": "🇷🇸",
-    "Switzerland": "🇨🇭", "Austria": "🇦🇹", "Denmark": "🇩🇰",
-    "Sweden": "🇸🇪", "Norway": "🇳🇴", "Scotland": "🏴󠁧󠁢󠁳󠁣󠁴󠁿",
-    "Wales": "🏴󠁧󠁢󠁷󠁬󠁳󠁿", "Ireland": "🇮🇪", "Czech Republic": "🇨🇿",
-    "Slovakia": "🇸🇰", "Hungary": "🇭🇺", "Romania": "🇷🇴",
-    "Bulgaria": "🇧🇬", "Ukraine": "🇺🇦", "Morocco": "🇲🇦",
-    "Egypt": "🇪🇬", "Nigeria": "🇳🇬", "Senegal": "🇸🇳",
-    "Saudi Arabia": "🇸🇦", "Iran": "🇮🇷", "China": "🇨🇳",
-    "India": "🇮🇳", "Ecuador": "🇪🇨", "Paraguay": "🇵🇾",
-    "Bolivia": "🇧🇴", "Peru": "🇵🇪", "Venezuela": "🇻🇪",
-    "Costa Rica": "🇨🇷", "Panama": "🇵🇦", "Honduras": "🇭🇳",
-    "World": "🌍", "Europe": "🇪🇺",
+    "Argentina": "\U0001f1e6\U0001f1f7",
+    "Brazil": "\U0001f1e7\U0001f1f7",
+    "England": "\U0001f3f4",
+    "Spain": "\U0001f1ea\U0001f1f8",
+    "Germany": "\U0001f1e9\U0001f1ea",
+    "France": "\U0001f1eb\U0001f1f7",
+    "Italy": "\U0001f1ee\U0001f1f9",
+    "Portugal": "\U0001f1f5\U0001f1f9",
+    "Netherlands": "\U0001f1f3\U0001f1f1",
+    "Belgium": "\U0001f1e7\U0001f1ea",
+    "Uruguay": "\U0001f1fa\U0001f1fe",
+    "Chile": "\U0001f1e8\U0001f1f1",
+    "Colombia": "\U0001f1e8\U0001f1f4",
+    "Mexico": "\U0001f1f2\U0001f1fd",
+    "USA": "\U0001f1fa\U0001f1f8",
+    "Japan": "\U0001f1ef\U0001f1f5",
+    "South Korea": "\U0001f1f0\U0001f1f7",
+    "Turkey": "\U0001f1f9\U0001f1f7",
+    "Greece": "\U0001f1ec\U0001f1f7",
+    "Poland": "\U0001f1f5\U0001f1f1",
+    "Croatia": "\U0001f1ed\U0001f1f7",
+    "Switzerland": "\U0001f1e8\U0001f1ed",
+    "Denmark": "\U0001f1e9\U0001f1f0",
+    "Sweden": "\U0001f1f8\U0001f1ea",
+    "Norway": "\U0001f1f3\U0001f1f4",
+    "Ukraine": "\U0001f1fa\U0001f1e6",
+    "Morocco": "\U0001f1f2\U0001f1e6",
+    "Egypt": "\U0001f1ea\U0001f1ec",
+    "Nigeria": "\U0001f1f3\U0001f1ec",
+    "Ecuador": "\U0001f1ea\U0001f1e8",
+    "Paraguay": "\U0001f1f5\U0001f1fe",
+    "Peru": "\U0001f1f5\U0001f1ea",
+    "Venezuela": "\U0001f1fb\U0001f1ea",
 }
 
 def get_flag(country):
-    return COUNTRY_FLAGS.get(country, "🏳️")
+    return COUNTRY_FLAGS.get(country, "")
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -82,36 +96,34 @@ def analyze_and_send():
             selections.append({
                 "match": f"{home} vs {away}",
                 "league": f"{flag} {country} - {league}",
-                "flag": flag,
                 "bet": odd["value"],
                 "odd": float(odd["odd"])
             })
 
     if not selections:
-        send_telegram("⚠️ Hoy no hay picks con probabilidad suficiente.")
+        send_telegram("Hoy no hay picks con probabilidad suficiente.")
         return
 
     selections.sort(key=lambda x: x["odd"])
     selections = selections[:10]
     avg_odd = sum(s["odd"] for s in selections) / len(selections)
-    casa = "🟢 STAKE" if len(selections) > 5 else "🔵 1XBET"
+    casa = "STAKE" if len(selections) > 5 else "1XBET"
 
-    msg = f"🎯 <b>IVANPICKS - Picks del día</b>\n"
-    msg += f"📅 {datetime.now(pytz.timezone('America/Argentina/Buenos_Aires')).strftime('%d/%m/%Y')}\n"
-    msg += f"🏦 Casa recomendada: {casa}\n\n"
+    msg = "<b>IVANPICKS - Picks del dia</b>\n"
+    msg += f"Fecha: {datetime.now(pytz.timezone('America/Argentina/Buenos_Aires')).strftime('%d/%m/%Y')}\n"
+    msg += f"Casa recomendada: {casa}\n\n"
     for i, s in enumerate(selections, 1):
         msg += f"<b>Pick {i}</b>\n"
-        msg += f"⚽ {s['match']}\n"
-        msg += f"🏆 {s['league']}\n"
-        msg += f"✅ Apuesta: {s['bet']}\n"
-        msg += f"💰 Cuota: {s['odd']}\n\n"
-    msg += f"📊 Cuota promedio: {avg_odd:.2f}\n"
-    msg += "⚠️ Apostá con responsabilidad."
+        msg += f"Partido: {s['match']}\n"
+        msg += f"Liga: {s['league']}\n"
+        msg += f"Apuesta: {s['bet']}\n"
+        msg += f"Cuota: {s['odd']}\n\n"
+    msg += f"Cuota promedio: {avg_odd:.2f}\n"
+    msg += "Aposta con responsabilidad."
     send_telegram(msg)
 
 schedule.every().day.at("03:00").do(analyze_and_send)
-
-send_telegram("✅ IvanPicks bot iniciado correctamente!")
+send_telegram("Bot IvanPicks iniciado!")
 analyze_and_send()
 
 while True:
