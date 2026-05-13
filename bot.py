@@ -13,7 +13,7 @@ API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 TZ = pytz.timezone("America/Argentina/Buenos_Aires")
 
 LEAGUE_INFO = {
-    "soccer_epl": ("\U0001f3f4", "Premier League", "ENG"),
+    "soccer_epl": ("\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f", "Premier League", "ENG"),
     "soccer_spain_la_liga": ("\U0001f1ea\U0001f1f8", "La Liga", "ESP"),
     "soccer_germany_bundesliga": ("\U0001f1e9\U0001f1ea", "Bundesliga", "GER"),
     "soccer_italy_serie_a": ("\U0001f1ee\U0001f1f9", "Serie A", "ITA"),
@@ -30,6 +30,8 @@ LEAGUE_INFO = {
     "soccer_chile_campeonato": ("\U0001f1e8\U0001f1f1", "Primera Division Chile", "CHI"),
     "soccer_colombia_primera_a": ("\U0001f1e8\U0001f1f4", "Liga Colombia", "COL"),
     "soccer_uruguay_primera_division": ("\U0001f1fa\U0001f1fe", "Primera Division Uruguay", "URU"),
+    "soccer_conmebol_copa_libertadores": ("\U0001f30e", "Copa Libertadores", "CONMEBOL"),
+    "soccer_conmebol_copa_sudamericana": ("\U0001f30e", "Copa Sudamericana", "CONMEBOL"),
 }
 
 sent_picks = set()
@@ -44,16 +46,6 @@ def send_telegram(message):
     print(f"Telegram: {r.status_code}")
     return r
 
-def get_team_stats(team_name, league_id, season=2024):
-    try:
-        url = "https://v3.football.api-sports.io/teams/statistics"
-        headers = {"x-apisports-key": API_FOOTBALL_KEY}
-        params = {"team": team_name, "league": league_id, "season": season}
-        r = requests.get(url, headers=headers, params=params)
-        return r.json().get("response", {})
-    except:
-        return {}
-
 def get_h2h(home_team, away_team):
     try:
         url = "https://v3.football.api-sports.io/fixtures/headtohead"
@@ -64,46 +56,36 @@ def get_h2h(home_team, away_team):
     except:
         return []
 
-def calculate_probability(home, away, sport_key):
+def calculate_probability(home, away):
     score = 50
-    flag, league_name, _ = LEAGUE_INFO.get(sport_key, ("", sport_key, ""))
-
-    # Análisis H2H
-    h2h = get_h2h(home, away)
-    if h2h:
-        home_wins = sum(1 for g in h2h if g["teams"]["home"]["name"] == home and g["teams"]["home"]["winner"])
-        away_wins = sum(1 for g in h2h if g["teams"]["away"]["name"] == away and g["teams"]["away"]["winner"])
-        total_goals = sum(g["goals"]["home"] + g["goals"]["away"] for g in h2h if g["goals"]["home"] is not None)
-        avg_goals = total_goals / len(h2h) if h2h else 2.5
-
-        # Ajustar probabilidad según H2H
-        if home_wins > away_wins:
-            score += 10
-        if avg_goals > 2.5:
-            score += 5
-        if avg_goals < 2.0:
-            score -= 5
-
+    try:
+        h2h = get_h2h(home, away)
+        if h2h:
+            home_wins = sum(1 for g in h2h if g["teams"]["home"]["name"] == home and g["teams"]["home"]["winner"])
+            away_wins = sum(1 for g in h2h if g["teams"]["away"]["name"] == away and g["teams"]["away"]["winner"])
+            total_goals = sum(g["goals"]["home"] + g["goals"]["away"] for g in h2h if g["goals"]["home"] is not None)
+            avg_goals = total_goals / len(h2h) if h2h else 2.5
+            if home_wins > away_wins:
+                score += 10
+            if avg_goals > 2.5:
+                score += 5
+            if avg_goals < 2.0:
+                score -= 5
+    except:
+        pass
     return min(score, 95)
 
 def analyze_match(home, away, sport_key, bookmakers):
     flag, league_name, _ = LEAGUE_INFO.get(sport_key, ("\U0001f3c6", sport_key, ""))
-    prob = calculate_probability(home, away, sport_key)
-
+    prob = calculate_probability(home, away)
     picks = []
-
     for bm in bookmakers:
         for market in bm.get("markets", []):
             key = market["key"]
             for outcome in market["outcomes"]:
                 odd = float(outcome["price"])
                 name = outcome["name"]
-
-                # Calcular valor esperado
                 implied_prob = 1 / odd * 100
-                value = prob - implied_prob
-
-                # Solo picks con buena probabilidad y valor
                 if odd >= 1.40 and odd <= 2.20 and implied_prob >= 45:
                     picks.append({
                         "match": f"{home} vs {away}",
@@ -112,19 +94,14 @@ def analyze_match(home, away, sport_key, bookmakers):
                         "bet": name,
                         "odd": odd,
                         "prob": round(implied_prob, 1),
-                        "value": round(value, 1)
                     })
-
-    # Ordenar por probabilidad
     picks.sort(key=lambda x: x["prob"], reverse=True)
     return picks[:2] if picks else []
 
 def get_todays_picks():
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     print(f"Analizando partidos para: {today}")
-
     all_picks = []
-
     for sport_key in LEAGUE_INFO.keys():
         try:
             url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
@@ -137,7 +114,6 @@ def get_todays_picks():
             r = requests.get(url, params=params)
             if r.status_code != 200:
                 continue
-
             games = r.json()
             for game in games:
                 if today not in game.get("commence_time", ""):
@@ -149,8 +125,6 @@ def get_todays_picks():
         except Exception as e:
             print(f"Error {sport_key}: {e}")
             continue
-
-    # Ordenar por probabilidad y eliminar duplicados
     all_picks.sort(key=lambda x: x["prob"], reverse=True)
     unique = []
     seen = set()
@@ -159,25 +133,20 @@ def get_todays_picks():
         if key not in seen:
             seen.add(key)
             unique.append(p)
-
     return unique[:10]
 
 def send_picks(picks, title="Picks del dia"):
     if not picks:
         print("No hay picks suficientes")
         return
-
-    # Verificar si ya se enviaron
     new_picks = [p for p in picks if f"{p['match']}-{p['bet']}" not in sent_picks]
     if not new_picks:
         print("No hay picks nuevos")
         return
-
     casa = "\U0001f7e2 STAKE" if len(new_picks) > 5 else "\U0001f535 1XBET"
     msg = f"\U0001f3af <b>IVANPICKS - {title}</b>\n"
     msg += f"\U0001f4c5 {datetime.now(TZ).strftime('%d/%m/%Y %H:%M')}\n"
     msg += f"\U0001f3e6 Casa recomendada: {casa}\n\n"
-
     for i, p in enumerate(new_picks, 1):
         msg += f"<b>Pick {i}</b>\n"
         msg += f"\u26bd {p['match']}\n"
@@ -185,11 +154,8 @@ def send_picks(picks, title="Picks del dia"):
         msg += f"\u2705 Apuesta: {p['bet']}\n"
         msg += f"\U0001f4b0 Cuota: {p['odd']}\n"
         msg += f"\U0001f4ca Probabilidad: {p['prob']}%\n\n"
-
     msg += "\u26a0\ufe0f Aposta con responsabilidad."
     send_telegram(msg)
-
-    # Marcar como enviados
     for p in new_picks:
         sent_picks.add(f"{p['match']}-{p['bet']}")
 
@@ -204,15 +170,13 @@ def check_new_opportunities():
     picks = get_todays_picks()
     new = [p for p in picks if f"{p['match']}-{p['bet']}" not in sent_picks]
     if new:
-        send_picks(new[:5], "Nueva oportunidad detectada!")
+        send_picks(new[:5], "Nueva oportunidad!")
 
-# Arranque inicial
 print("Bot IvanPicks iniciando...")
 send_telegram("\U0001f916 Bot IvanPicks iniciado y activo!")
 daily_analysis()
 
-# Programar tareas
-schedule.every().day.at("03:00").do(daily_analysis)  # 00:00 Argentina = 03:00 UTC
+schedule.every().day.at("03:00").do(daily_analysis)
 schedule.every(2).hours.do(check_new_opportunities)
 
 while True:
