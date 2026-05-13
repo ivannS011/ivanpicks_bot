@@ -42,110 +42,135 @@ LEAGUE_INFO = {
 }
 
 sent_picks = set()
-api_football_cache = {}
+cache = {}
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    r = requests.post(url, json={
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    })
+    r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"})
     print(f"Telegram: {r.status_code}")
     return r
 
-def get_team_stats(team_id, league_id, season=2024):
-    cache_key = f"stats_{team_id}_{league_id}"
-    if cache_key in api_football_cache:
-        return api_football_cache[cache_key]
+def api_football_get(endpoint, params):
+    cache_key = f"{endpoint}_{str(params)}"
+    if cache_key in cache:
+        return cache[cache_key]
     try:
-        url = "https://v3.football.api-sports.io/teams/statistics"
+        url = f"https://v3.football.api-sports.io/{endpoint}"
         headers = {"x-apisports-key": API_FOOTBALL_KEY}
-        params = {"team": team_id, "league": league_id, "season": season}
-        r = requests.get(url, headers=headers, params=params)
-        data = r.json().get("response", {})
-        api_football_cache[cache_key] = data
-        return data
-    except:
-        return {}
-
-def get_h2h(home_team, away_team):
-    cache_key = f"h2h_{home_team}_{away_team}"
-    if cache_key in api_football_cache:
-        return api_football_cache[cache_key]
-    try:
-        url = "https://v3.football.api-sports.io/fixtures/headtohead"
-        headers = {"x-apisports-key": API_FOOTBALL_KEY}
-        params = {"h2h": f"{home_team}-{away_team}", "last": 10}
         r = requests.get(url, headers=headers, params=params)
         data = r.json().get("response", [])
-        api_football_cache[cache_key] = data
+        cache[cache_key] = data
         return data
     except:
         return []
 
 def get_team_id(team_name, league_id):
-    try:
-        url = "https://v3.football.api-sports.io/teams"
-        headers = {"x-apisports-key": API_FOOTBALL_KEY}
-        params = {"name": team_name, "league": league_id, "season": 2024}
-        r = requests.get(url, headers=headers, params=params)
-        teams = r.json().get("response", [])
-        if teams:
-            return teams[0]["team"]["id"]
-    except:
-        pass
+    data = api_football_get("teams", {"name": team_name, "league": league_id, "season": 2024})
+    if data:
+        return data[0]["team"]["id"]
     return None
 
-def analyze_with_api_football(home, away, league_id):
+def get_fixtures_stats(team_id, league_id):
+    data = api_football_get("teams/statistics", {"team": team_id, "league": league_id, "season": 2024})
+    return data if data else {}
+
+def get_h2h(home, away):
+    data = api_football_get("fixtures/headtohead", {"h2h": f"{home}-{away}", "last": 10})
+    return data if data else []
+
+def analyze_corners_cards(home, away, league_id):
     result = {
-        "avg_goals": 2.5,
-        "avg_corners": 10,
-        "avg_cards": 3,
-        "home_form": 50,
-        "away_form": 50,
-        "btts_prob": 45,
-        "over25_prob": 45,
-        "corners_over95_prob": 45,
-        "cards_over35_prob": 45,
+        "corners_avg": 10.0,
+        "cards_avg": 3.5,
+        "corners_over95_prob": 50,
+        "corners_over105_prob": 40,
+        "cards_over35_prob": 50,
+        "cards_over45_prob": 35,
+        "home_corners_avg": 5.0,
+        "away_corners_avg": 5.0,
     }
     try:
         home_id = get_team_id(home, league_id)
         away_id = get_team_id(away, league_id)
 
-        if home_id:
-            home_stats = get_team_stats(home_id, league_id)
-            if home_stats:
-                home_goals = home_stats.get("goals", {}).get("for", {}).get("average", {}).get("total", "2.5")
-                home_corners = home_stats.get("fixtures", {}).get("played", {}).get("total", 1)
-                result["home_form"] = min(float(str(home_goals).replace("-", "2.5")) * 20, 80)
-
-        if away_id:
-            away_stats = get_team_stats(away_id, league_id)
-            if away_stats:
-                away_goals = away_stats.get("goals", {}).get("for", {}).get("average", {}).get("total", "2.5")
-                result["away_form"] = min(float(str(away_goals).replace("-", "2.5")) * 20, 80)
-
         h2h = get_h2h(home, away)
         if h2h:
-            total_goals = sum(
-                (g["goals"]["home"] or 0) + (g["goals"]["away"] or 0)
-                for g in h2h if g["goals"]["home"] is not None
-            )
-            avg = total_goals / len(h2h)
-            result["avg_goals"] = avg
-            result["over25_prob"] = min(int((avg / 3) * 70), 80)
-            btts = sum(1 for g in h2h if g["goals"]["home"] and g["goals"]["away"] and g["goals"]["home"] > 0 and g["goals"]["away"] > 0)
-            result["btts_prob"] = int((btts / len(h2h)) * 100)
+            corners_list = []
+            cards_list = []
+            for g in h2h:
+                stats = g.get("statistics", [])
+                home_corners = 0
+                away_corners = 0
+                home_cards = 0
+                away_cards = 0
+                for s in stats:
+                    if s["type"] == "Corner Kicks":
+                        if s["team"]["name"] == home:
+                            home_corners = int(s["value"] or 0)
+                        else:
+                            away_corners = int(s["value"] or 0)
+                    if s["type"] == "Yellow Cards":
+                        if s["team"]["name"] == home:
+                            home_cards = int(s["value"] or 0)
+                        else:
+                            away_cards = int(s["value"] or 0)
+                total_corners = home_corners + away_corners
+                total_cards = home_cards + away_cards
+                if total_corners > 0:
+                    corners_list.append(total_corners)
+                if total_cards > 0:
+                    cards_list.append(total_cards)
+
+            if corners_list:
+                avg_c = sum(corners_list) / len(corners_list)
+                result["corners_avg"] = round(avg_c, 1)
+                result["corners_over95_prob"] = int(sum(1 for c in corners_list if c > 9.5) / len(corners_list) * 100)
+                result["corners_over105_prob"] = int(sum(1 for c in corners_list if c > 10.5) / len(corners_list) * 100)
+
+            if cards_list:
+                avg_k = sum(cards_list) / len(cards_list)
+                result["cards_avg"] = round(avg_k, 1)
+                result["cards_over35_prob"] = int(sum(1 for k in cards_list if k > 3.5) / len(cards_list) * 100)
+                result["cards_over45_prob"] = int(sum(1 for k in cards_list if k > 4.5) / len(cards_list) * 100)
 
     except Exception as e:
-        print(f"API-Football error: {e}")
+        print(f"Error corners/cards: {e}")
 
     return result
 
-def get_best_market(home, away, league_id, bookmakers, stats):
-    candidates = []
+def get_goals_stats(home, away):
+    result = {
+        "avg_goals": 2.5,
+        "over25_prob": 45,
+        "over15_prob": 65,
+        "btts_prob": 45,
+        "home_form": 50,
+        "away_form": 50,
+    }
+    try:
+        h2h = get_h2h(home, away)
+        if h2h:
+            goals_list = []
+            btts_count = 0
+            for g in h2h:
+                hg = g["goals"]["home"] or 0
+                ag = g["goals"]["away"] or 0
+                goals_list.append(hg + ag)
+                if hg > 0 and ag > 0:
+                    btts_count += 1
 
+            if goals_list:
+                avg = sum(goals_list) / len(goals_list)
+                result["avg_goals"] = round(avg, 1)
+                result["over25_prob"] = int(sum(1 for g in goals_list if g > 2.5) / len(goals_list) * 100)
+                result["over15_prob"] = int(sum(1 for g in goals_list if g > 1.5) / len(goals_list) * 100)
+                result["btts_prob"] = int(btts_count / len(h2h) * 100)
+    except Exception as e:
+        print(f"Error goals stats: {e}")
+    return result
+
+def get_best_market_with_odds(home, away, bookmakers, goals_stats):
+    candidates = []
     for bm in bookmakers:
         for market in bm.get("markets", []):
             key = market["key"]
@@ -153,51 +178,45 @@ def get_best_market(home, away, league_id, bookmakers, stats):
                 odd = float(outcome["price"])
                 name = outcome["name"]
                 implied_prob = round(1 / odd * 100, 1)
-
                 stat_prob = implied_prob
-                market_name = ""
+                market_name = name
 
                 if key == "h2h":
                     if name == home:
-                        stat_prob = stats["home_form"]
-                        market_name = "Gana local"
+                        stat_prob = goals_stats["home_form"]
+                        market_name = f"Gana {home}"
                     elif name == away:
-                        stat_prob = stats["away_form"]
-                        market_name = "Gana visitante"
+                        stat_prob = goals_stats["away_form"]
+                        market_name = f"Gana {away}"
                     else:
                         market_name = "Empate"
 
                 elif key == "totals":
                     if "Over" in name and "2.5" in name:
-                        stat_prob = stats["over25_prob"]
+                        stat_prob = goals_stats["over25_prob"]
                         market_name = "Mas de 2.5 goles"
                     elif "Under" in name and "2.5" in name:
-                        stat_prob = 100 - stats["over25_prob"]
+                        stat_prob = 100 - goals_stats["over25_prob"]
                         market_name = "Menos de 2.5 goles"
                     elif "Over" in name and "1.5" in name:
-                        stat_prob = min(stats["over25_prob"] + 15, 85)
+                        stat_prob = goals_stats["over15_prob"]
                         market_name = "Mas de 1.5 goles"
-                    else:
-                        market_name = name
 
                 elif key == "btts":
                     if name == "Yes":
-                        stat_prob = stats["btts_prob"]
+                        stat_prob = goals_stats["btts_prob"]
                         market_name = "Ambos equipos marcan"
                     else:
-                        stat_prob = 100 - stats["btts_prob"]
+                        stat_prob = 100 - goals_stats["btts_prob"]
                         market_name = "No ambos marcan"
 
                 value = stat_prob - implied_prob
-
                 if odd >= 1.35 and odd <= 2.50 and stat_prob >= 55 and value >= 0:
                     candidates.append({
-                        "bet": market_name or name,
+                        "bet": market_name,
                         "odd": odd,
                         "prob": stat_prob,
-                        "implied": implied_prob,
                         "value": round(value, 1),
-                        "market": key
                     })
 
     candidates.sort(key=lambda x: (x["prob"], x["value"]), reverse=True)
@@ -206,7 +225,8 @@ def get_best_market(home, away, league_id, bookmakers, stats):
 def get_todays_picks():
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     print(f"Analizando partidos para: {today}")
-    all_picks = []
+    main_picks = []
+    stats_picks = []
 
     for sport_key, (flag, league_name, league_id) in LEAGUE_INFO.items():
         try:
@@ -229,81 +249,129 @@ def get_todays_picks():
                 home = game["home_team"]
                 away = game["away_team"]
                 bookmakers = game.get("bookmakers", [])
-
                 if not bookmakers:
                     continue
 
-                stats = analyze_with_api_football(home, away, league_id)
-                best = get_best_market(home, away, league_id, bookmakers, stats)
-
+                # Picks con cuotas
+                goals_stats = get_goals_stats(home, away)
+                best = get_best_market_with_odds(home, away, bookmakers, goals_stats)
                 if best:
-                    all_picks.append({
+                    main_picks.append({
                         "match": f"{home} vs {away}",
                         "league": f"{flag} {league_name}",
                         "bet": best["bet"],
                         "odd": best["odd"],
                         "prob": best["prob"],
-                        "value": best["value"],
+                        "type": "main"
+                    })
+
+                # Picks solo probabilidad (corners/tarjetas)
+                cc_stats = analyze_corners_cards(home, away, league_id)
+                if cc_stats["corners_over95_prob"] >= 65:
+                    stats_picks.append({
+                        "match": f"{home} vs {away}",
+                        "league": f"{flag} {league_name}",
+                        "bet": "Mas de 9.5 corners",
+                        "prob": cc_stats["corners_over95_prob"],
+                        "avg": cc_stats["corners_avg"],
+                        "type": "stats"
+                    })
+                if cc_stats["corners_over105_prob"] >= 60:
+                    stats_picks.append({
+                        "match": f"{home} vs {away}",
+                        "league": f"{flag} {league_name}",
+                        "bet": "Mas de 10.5 corners",
+                        "prob": cc_stats["corners_over105_prob"],
+                        "avg": cc_stats["corners_avg"],
+                        "type": "stats"
+                    })
+                if cc_stats["cards_over35_prob"] >= 65:
+                    stats_picks.append({
+                        "match": f"{home} vs {away}",
+                        "league": f"{flag} {league_name}",
+                        "bet": "Mas de 3.5 tarjetas",
+                        "prob": cc_stats["cards_over35_prob"],
+                        "avg": cc_stats["cards_avg"],
+                        "type": "stats"
                     })
 
         except Exception as e:
             print(f"Error {sport_key}: {e}")
             continue
 
-    all_picks.sort(key=lambda x: (x["prob"], x["value"]), reverse=True)
-    unique = []
+    main_picks.sort(key=lambda x: x["prob"], reverse=True)
+    stats_picks.sort(key=lambda x: x["prob"], reverse=True)
+
     seen = set()
-    for p in all_picks:
-        key = f"{p['match']}-{p['bet']}"
-        if key not in seen:
-            seen.add(key)
-            unique.append(p)
+    unique_main = []
+    for p in main_picks:
+        k = f"{p['match']}-{p['bet']}"
+        if k not in seen:
+            seen.add(k)
+            unique_main.append(p)
 
-    print(f"Picks encontrados: {len(unique)}")
-    return unique[:10]
+    unique_stats = []
+    for p in stats_picks:
+        k = f"{p['match']}-{p['bet']}"
+        if k not in seen:
+            seen.add(k)
+            unique_stats.append(p)
 
-def send_picks(picks, title="Picks del dia"):
-    if not picks:
-        print("No hay picks suficientes")
-        return
+    print(f"Picks con cuota: {len(unique_main)} | Picks estadisticas: {len(unique_stats)}")
+    return unique_main[:10], unique_stats[:5]
 
-    new_picks = [p for p in picks if f"{p['match']}-{p['bet']}" not in sent_picks]
-    if not new_picks:
+def send_picks(main_picks, stats_picks, title="Picks del dia"):
+    new_main = [p for p in main_picks if f"{p['match']}-{p['bet']}" not in sent_picks]
+    new_stats = [p for p in stats_picks if f"{p['match']}-{p['bet']}" not in sent_picks]
+
+    if not new_main and not new_stats:
         print("No hay picks nuevos")
         return
 
-    casa = "\U0001f7e2 STAKE" if len(new_picks) > 5 else "\U0001f535 1XBET"
+    casa = "\U0001f7e2 STAKE" if len(new_main) > 5 else "\U0001f535 1XBET"
     msg = f"\U0001f3af <b>IVANPICKS - {title}</b>\n"
-    msg += f"\U0001f4c5 {datetime.now(TZ).strftime('%d/%m/%Y %H:%M')}\n"
-    msg += f"\U0001f3e6 Casa recomendada: {casa}\n\n"
+    msg += f"\U0001f4c5 {datetime.now(TZ).strftime('%d/%m/%Y %H:%M')}\n\n"
 
-    for i, p in enumerate(new_picks, 1):
-        msg += f"<b>Pick {i}</b>\n"
-        msg += f"\u26bd {p['match']}\n"
-        msg += f"\U0001f3c6 {p['league']}\n"
-        msg += f"\u2705 Apuesta: {p['bet']}\n"
-        msg += f"\U0001f4b0 Cuota: {p['odd']}\n"
-        msg += f"\U0001f4ca Probabilidad: {p['prob']}%\n\n"
+    if new_main:
+        msg += f"\U0001f3e6 <b>Casa recomendada: {casa}</b>\n\n"
+        for i, p in enumerate(new_main, 1):
+            msg += f"<b>Pick {i}</b>\n"
+            msg += f"\u26bd {p['match']}\n"
+            msg += f"\U0001f3c6 {p['league']}\n"
+            msg += f"\u2705 Apuesta: {p['bet']}\n"
+            msg += f"\U0001f4b0 Cuota: {p['odd']}\n"
+            msg += f"\U0001f4ca Probabilidad: {p['prob']}%\n\n"
+
+    if new_stats:
+        msg += f"\U0001f4ca <b>ANALISIS ESTADISTICO</b>\n"
+        msg += f"<i>Busca estas cuotas en tu casa de apuestas</i>\n\n"
+        for p in new_stats:
+            msg += f"\u26bd {p['match']}\n"
+            msg += f"\U0001f3c6 {p['league']}\n"
+            msg += f"\U0001f4cc {p['bet']}\n"
+            msg += f"\U0001f4ca Probabilidad: {p['prob']}%\n"
+            msg += f"\U0001f4c8 Promedio H2H: {p['avg']}\n\n"
 
     msg += "\u26a0\ufe0f Aposta con responsabilidad."
     send_telegram(msg)
 
-    for p in new_picks:
+    for p in new_main + new_stats:
         sent_picks.add(f"{p['match']}-{p['bet']}")
 
 def daily_analysis():
     print("Analisis diario 00:00...")
     sent_picks.clear()
-    api_football_cache.clear()
-    picks = get_todays_picks()
-    send_picks(picks, "Picks del dia")
+    cache.clear()
+    main_picks, stats_picks = get_todays_picks()
+    send_picks(main_picks, stats_picks, "Picks del dia")
 
 def check_new_opportunities():
     print("Revisando nuevas oportunidades...")
-    picks = get_todays_picks()
-    new = [p for p in picks if f"{p['match']}-{p['bet']}" not in sent_picks]
-    if new:
-        send_picks(new[:5], "Nueva oportunidad!")
+    main_picks, stats_picks = get_todays_picks()
+    new_main = [p for p in main_picks if f"{p['match']}-{p['bet']}" not in sent_picks]
+    new_stats = [p for p in stats_picks if f"{p['match']}-{p['bet']}" not in sent_picks]
+    if new_main or new_stats:
+        send_picks(new_main[:3], new_stats[:2], "Nueva oportunidad!")
 
 print("Bot IvanPicks iniciando...")
 send_telegram("\U0001f916 Bot IvanPicks iniciado y activo!")
