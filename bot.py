@@ -10,8 +10,7 @@ ODDS_API_KEY     = os.environ.get("ODDS_API_KEY")
 API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 
 TZ             = pytz.timezone("America/Argentina/Buenos_Aires")
-# SOLUCIÓN 1: Ruta relativa multiplataforma (compatible con Windows y Linux)
-REQUESTS_FILE  = "api_requests.json" 
+REQUESTS_FILE  = "/tmp/api_requests.json"
 MIN_PROB       = 60
 MIN_SAMPLE     = 5
 MAX_API_REQ    = 90
@@ -48,14 +47,6 @@ LEAGUE_INFO = {
     "soccer_japan_j_league":             ("🇯🇵", "J-League",             98, None),
 }
 
-# SOLUCIÓN 4: Registro de ligas que usan año calendario completo (Enero - Diciembre)
-CALENDAR_YEAR_LEAGUES = {
-    "soccer_argentina_primera_division", "soccer_brazil_campeonato",
-    "soccer_mexico_ligamx", "soccer_usa_mls", "soccer_chile_campeonato",
-    "soccer_colombia_primera_a", "soccer_uruguay_primera_division",
-    "soccer_japan_j_league"
-}
-
 sent_picks  = set()
 api_cache   = {}
 fbref_cache = {}
@@ -67,11 +58,8 @@ FBREF_HEADERS = {
 
 # ── Utilidades ────────────────────────────────────────────────────────────────
 
-# SOLUCIÓN 4: Modificada para adaptarse según la liga analizada
-def get_current_season(sport_key=None):
+def get_current_season():
     now = datetime.now(TZ)
-    if sport_key in CALENDAR_YEAR_LEAGUES:
-        return now.year
     return now.year if now.month >= 7 else now.year - 1
 
 def is_useful_hour():
@@ -136,12 +124,12 @@ def apif(endpoint, params):
     except Exception as e:
         print(f"[APIF ERROR] {e}"); return []
 
-def team_id(name, league_id, sport_key=None):
-    data = apif("teams", {"name": name, "league": league_id, "season": get_current_season(sport_key)})
+def team_id(name, league_id):
+    data = apif("teams", {"name": name, "league": league_id, "season": get_current_season()})
     return data[0]["team"]["id"] if data else None
 
-def team_form(tid, sport_key=None):
-    fx = apif("fixtures", {"team": tid, "last": 8, "season": get_current_season(sport_key), "status": "FT"})
+def team_form(tid):
+    fx = apif("fixtures", {"team": tid, "last": 8, "season": get_current_season(), "status": "FT"})
     if not fx: return None
     wins, gf, ga, htf, hta = 0, [], [], [], []
     for f in fx:
@@ -159,9 +147,9 @@ def team_form(tid, sport_key=None):
     return {"win_rate": round(wins/n*100), "avg_for": round(sum(gf)/n,2),
             "avg_against": round(sum(ga)/n,2), "avg_ht_for": round(sum(htf)/n,2), "sample": n}
 
-def fixture_corners_cards(tid, n=6, sport_key=None):
+def fixture_corners_cards(tid, n=6):
     if load_req() >= 80: return [], []
-    season = get_current_season(sport_key)
+    season = get_current_season()
     fx = apif("fixtures", {"team": tid, "last": n, "season": season, "status": "FT"})
     corners, cards = [], []
     for f in fx[:5]:
@@ -185,7 +173,7 @@ def fbref_table(url, col):
         time.sleep(FBREF_DELAY + random.uniform(0, 1.5))
         r = requests.get(url, headers=FBREF_HEADERS, timeout=20)
         if r.status_code != 200: return {}
-        html = r.text.replace("","")
+        html = r.text.replace("<!--","").replace("-->","")
         for df in pd.read_html(StringIO(html)):
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = [" ".join(str(c) for c in x).strip() for x in df.columns]
@@ -206,16 +194,10 @@ def fbref_table(url, col):
         print(f"[FBRef] {e}")
     return {}
 
-def fbref_comp(comp_id, sport_key=None):
+def fbref_comp(comp_id):
     if comp_id in fbref_cache: return fbref_cache[comp_id]
-    s = get_current_season(sport_key)
-    
-    # SOLUCIÓN 4: Adaptar URL de FBRef según formato anual o bianual
-    if sport_key in CALENDAR_YEAR_LEAGUES:
-        base = f"https://fbref.com/en/comps/{comp_id}/{s}"
-    else:
-        base = f"https://fbref.com/en/comps/{comp_id}/{s}-{s+1}"
-        
+    s = get_current_season()
+    base = f"https://fbref.com/en/comps/{comp_id}/{s}-{s+1}"
     shooting = fbref_table(f"{base}/shooting/", "Sh/90")
     corners  = fbref_table(f"{base}/misc/", "CK")
     cards    = fbref_table(f"{base}/misc/", "CrdY")
@@ -234,35 +216,20 @@ def fbref_comp(comp_id, sport_key=None):
     print(f"[FBRef] Comp {comp_id}: {len(data)} equipos")
     return data
 
-def fbref_team(name, comp_id, sport_key=None):
+def fbref_team(name, comp_id):
     if not comp_id: return None
-    data = fbref_comp(comp_id, sport_key)
+    data = fbref_comp(comp_id)
     if name in data: return data[name]
-    
-    # SOLUCIÓN 3: Algoritmo inteligente anti-colisión ("Real", "FC", etc.)
     nl = name.lower()
-    ignore = {"real", "fc", "club", "deportivo", "united", "city", "atlético", "atletico", "sporting", "cf", "cd", "clube"}
-    name_words = [w for w in nl.split() if w not in ignore]
-    
     for k, v in data.items():
-        kl = k.lower()
-        if nl in kl or kl in nl:
+        if nl.split()[0] in k.lower() or k.lower().split()[0] in nl:
             return v
-        if name_words:
-            if any(w in kl for w in name_words):
-                return v
     return None
 
-def fbref_players(home, away, comp_id, sport_key=None):
+def fbref_players(home, away, comp_id):
     if not comp_id: return []
-    s = get_current_season(sport_key)
-    
-    # SOLUCIÓN 4: URL Dinámica de FBRef para jugadores
-    if sport_key in CALENDAR_YEAR_LEAGUES:
-        base = f"https://fbref.com/en/comps/{comp_id}/{s}"
-    else:
-        base = f"https://fbref.com/en/comps/{comp_id}/{s}-{s+1}"
-        
+    s = get_current_season()
+    base = f"https://fbref.com/en/comps/{comp_id}/{s}-{s+1}"
     picks = []
 
     def get_df(url):
@@ -270,7 +237,7 @@ def fbref_players(home, away, comp_id, sport_key=None):
             time.sleep(FBREF_DELAY + random.uniform(0,1))
             r = requests.get(url, headers=FBREF_HEADERS, timeout=20)
             if r.status_code != 200: return None
-            html = r.text.replace("","")
+            html = r.text.replace("<!--","").replace("-->","")
             for df in pd.read_html(StringIO(html)):
                 if isinstance(df.columns, pd.MultiIndex):
                     df.columns = [" ".join(str(c) for c in x).strip() for x in df.columns]
@@ -289,13 +256,7 @@ def fbref_players(home, away, comp_id, sport_key=None):
         vcol = next((c for c in cols if c.strip()=="SoT/90" or c.endswith(" SoT/90")), None)
         if pcol and scol and vcol:
             for team in [home, away]:
-                # SOLUCIÓN 3: Filtrado seguro de palabras irrelevantes para máscaras de texto
-                nl = team.lower()
-                ignore = {"real", "fc", "club", "deportivo", "united", "city", "atlético", "atletico", "sporting", "cf", "cd"}
-                words = [w for w in nl.split() if w not in ignore]
-                keyword = words[0] if words else nl.split()[0]
-                
-                mask = df[scol].astype(str).str.lower().str.contains(keyword)
+                mask = df[scol].astype(str).str.lower().str.contains(team.lower().split()[0])
                 tdf = df[mask].copy()
                 tdf["_v"] = pd.to_numeric(tdf[vcol], errors="coerce")
                 for _, row in tdf.nlargest(2, "_v").iterrows():
@@ -315,12 +276,7 @@ def fbref_players(home, away, comp_id, sport_key=None):
         sppct = next((c for c in cols if "Save%" in c), None)
         if pcol and scol and mpcol and svcol:
             for team in [home, away]:
-                nl = team.lower()
-                ignore = {"real", "fc", "club", "deportivo", "united", "city", "atlético", "atletico", "sporting", "cf", "cd"}
-                words = [w for w in nl.split() if w not in ignore]
-                keyword = words[0] if words else nl.split()[0]
-                
-                mask = df[scol].astype(str).str.lower().str.contains(keyword)
+                mask = df[scol].astype(str).str.lower().str.contains(team.lower().split()[0])
                 tdf = df[mask].copy()
                 tdf["_mp"] = pd.to_numeric(tdf[mpcol], errors="coerce")
                 for _, row in tdf.nlargest(1, "_mp").iterrows():
@@ -337,11 +293,11 @@ def fbref_players(home, away, comp_id, sport_key=None):
 
 # ── Análisis de mercados ──────────────────────────────────────────────────────
 
-def analyze_goals(home, away, league_id, fbref_id, sport_key=None):
-    hid = team_id(home, league_id, sport_key)
-    aid = team_id(away, league_id, sport_key)
-    hf  = team_form(hid, sport_key) if hid else None
-    af  = team_form(aid, sport_key) if aid else None
+def analyze_goals(home, away, league_id, fbref_id):
+    hid = team_id(home, league_id)
+    aid = team_id(away, league_id)
+    hf  = team_form(hid) if hid else None
+    af  = team_form(aid) if aid else None
 
     h2h = apif("fixtures/headtohead", {"h2h": f"{hid}-{aid}", "last": 8, "status": "FT"}) \
           if hid and aid else []
@@ -381,14 +337,15 @@ def analyze_goals(home, away, league_id, fbref_id, sport_key=None):
         "sample":         n,
     }
 
-def analyze_cc(home, away, league_id, fbref_id, sport_key=None):
+def analyze_cc(home, away, league_id, fbref_id):
     res = {k: None for k in ["corners_total","corners_1h","corners_home","corners_away",
                                "cards_total","cards_1h","cards_home","cards_away",
                                "corners_avg","cards_avg","source"]}
     res["source"] = "none"
 
-    fh = fbref_team(home, fbref_id, sport_key)
-    fa = fbref_team(away, fbref_id, sport_key)
+    # FBRef path
+    fh = fbref_team(home, fbref_id)
+    fa = fbref_team(away, fbref_id)
     if fh and fa:
         def pm(val, mp): return val/mp if val and mp and mp>0 else None
         ch = pm(fh.get("corners"), fh.get("mp"))
@@ -413,13 +370,14 @@ def analyze_cc(home, away, league_id, fbref_id, sport_key=None):
             res["source"] = "fbref"
             return res
 
+    # API-Football fallback
     if load_req() >= 80: return res
-    hid = team_id(home, league_id, sport_key)
-    aid = team_id(away, league_id, sport_key)
+    hid = team_id(home, league_id)
+    aid = team_id(away, league_id)
     if not hid or not aid: return res
     ch, ck = [], []
     for tid in [hid, aid]:
-        c, k = fixture_corners_cards(tid, sport_key=sport_key)
+        c, k = fixture_corners_cards(tid)
         ch += c; ck += k
     if len(ch) >= MIN_SAMPLE:
         tc = [a*2 for a in ch]; tk = [a*2 for a in ck]
@@ -485,7 +443,7 @@ def get_todays_picks():
                 print(f"[{league_name}] {home} vs {away}")
 
                 # Goles + cuotas
-                stats = analyze_goals(home, away, league_id, fbref_id, sport_key)
+                stats = analyze_goals(home, away, league_id, fbref_id)
                 pick  = best_odds_pick(home, away, bm, stats)
                 if pick:
                     odds_picks.append({"match":f"{home} vs {away}","league":f"{flag} {league_name}",**pick})
@@ -499,7 +457,7 @@ def get_todays_picks():
                                             "sample":stats["sample"],"source":"goals"})
 
                 # Corners + tarjetas
-                cc = analyze_cc(home, away, league_id, fbref_id, sport_key)
+                cc = analyze_cc(home, away, league_id, fbref_id)
                 for field in ["corners_total","corners_1h","corners_home","corners_away",
                               "cards_total","cards_1h","cards_home","cards_away"]:
                     p = cc.get(field)
@@ -512,7 +470,7 @@ def get_todays_picks():
 
                 # Jugadores
                 if fbref_id:
-                    player_picks.extend(fbref_players(home, away, fbref_id, sport_key))
+                    player_picks.extend(fbref_players(home, away, fbref_id))
 
                 league_count += 1; analyzed += 1
         except Exception as e:
