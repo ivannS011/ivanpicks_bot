@@ -12,23 +12,7 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
 API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 
 TZ = pytz.timezone("America/Argentina/Buenos_Aires")
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-REQUESTS_FILE = os.path.join(BASE_DIR, "api_requests.json")
-SENT_PICKS_FILE = os.path.join(BASE_DIR, "sent_picks.json")
-
-SOUTH_AMERICAN_LEAGUES = {
-    "soccer_argentina_primera_division",
-    "soccer_brazil_campeonato",
-    "soccer_mexico_ligamx",
-    "soccer_chile_campeonato",
-    "soccer_colombia_primera_a",
-    "soccer_uruguay_primera_division",
-    "soccer_conmebol_copa_libertadores",
-    "soccer_usa_mls",
-    "soccer_japan_j_league",
-    "soccer_saudi_arabias_league",
-}
+REQUESTS_FILE = "/tmp/api_requests.json"
 
 LEAGUE_INFO = {
     "soccer_epl": ("\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f", "Premier League", 39),
@@ -59,12 +43,11 @@ LEAGUE_INFO = {
     "soccer_switzerland_superleague": ("\U0001f1e8\U0001f1ed", "Super League Suiza", 207),
 }
 
+sent_picks = set()
 cache = {}
 
-def get_current_season(sport_key=None):
+def get_current_season():
     now = datetime.now(TZ)
-    if sport_key and sport_key in SOUTH_AMERICAN_LEAGUES:
-        return now.year
     return now.year if now.month >= 7 else now.year - 1
 
 def load_request_count():
@@ -94,36 +77,16 @@ def increment_request_count():
     save_request_count(count)
     return count
 
-def load_sent_picks():
-    today = datetime.now(TZ).strftime("%Y-%m-%d")
-    try:
-        with open(SENT_PICKS_FILE, "r") as f:
-            data = json.load(f)
-            if data.get("date") == today:
-                return set(data.get("picks", []))
-    except:
-        pass
-    return set()
-
-def save_sent_picks(picks_set):
-    today = datetime.now(TZ).strftime("%Y-%m-%d")
-    try:
-        with open(SENT_PICKS_FILE, "w") as f:
-            json.dump({"date": today, "picks": list(picks_set)}, f)
-    except:
-        pass
-
-sent_picks = load_sent_picks()
-
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    # Split si mensaje es muy largo
     if len(message) > 4000:
         parts = [message[i:i+4000] for i in range(0, len(message), 4000)]
         for part in parts:
-            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": part, "parse_mode": "HTML"}, timeout=10)
+            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": part, "parse_mode": "HTML"})
             time.sleep(1)
         return
-    r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}, timeout=10)
+    r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"})
     print(f"Telegram: {r.status_code}")
 
 def api_football_get(endpoint, params):
@@ -132,7 +95,7 @@ def api_football_get(endpoint, params):
         print(f"Limite requests alcanzado ({count}/100)")
         return []
 
-    cache_key = f"{endpoint}_{json.dumps(params, sort_keys=True)}"
+    cache_key = f"{endpoint}_{str(sorted(params.items()))}"
     if cache_key in cache:
         return cache[cache_key]
 
@@ -149,13 +112,13 @@ def api_football_get(endpoint, params):
         print(f"API-Football error: {e}")
         return []
 
-def get_team_id(team_name, league_id, sport_key=None):
-    season = get_current_season(sport_key)
+def get_team_id(team_name, league_id):
+    season = get_current_season()
     data = api_football_get("teams", {"name": team_name, "league": league_id, "season": season})
     return data[0]["team"]["id"] if data else None
 
-def get_team_form(team_id, sport_key=None):
-    season = get_current_season(sport_key)
+def get_team_form(team_id):
+    season = get_current_season()
     fixtures = api_football_get("fixtures", {
         "team": team_id, "last": 8,
         "season": season, "status": "FT"
@@ -193,18 +156,16 @@ def get_team_form(team_id, sport_key=None):
         "sample": len(fixtures)
     }
 
-def get_goals_and_form(home, away, league_id, sport_key=None):
-    home_id = get_team_id(home, league_id, sport_key)
-    away_id = get_team_id(away, league_id, sport_key)
+def get_goals_and_form(home, away, league_id):
+    home_id = get_team_id(home, league_id)
+    away_id = get_team_id(away, league_id)
 
-    home_form = get_team_form(home_id, sport_key) if home_id else None
-    away_form = get_team_form(away_id, sport_key) if away_id else None
+    home_form = get_team_form(home_id) if home_id else None
+    away_form = get_team_form(away_id) if away_id else None
 
-    h2h = []
-    if home_id and away_id:
-        h2h = api_football_get("fixtures/headtohead", {
-            "h2h": f"{home_id}-{away_id}", "last": 8, "status": "FT"
-        })
+    h2h = api_football_get("fixtures/headtohead", {
+        "h2h": f"{home}-{away}", "last": 8, "status": "FT"
+    })
 
     if len(h2h) >= 4:
         goals_list = []
@@ -240,20 +201,20 @@ def get_goals_and_form(home, away, league_id, sport_key=None):
 
     return None
 
-def analyze_corners_cards(home, away, league_id, sport_key=None):
-    if get_request_count() >= 50:
+def analyze_corners_cards(home, away, league_id):
+    if get_request_count() >= 80:
         return None
 
-    home_id = get_team_id(home, league_id, sport_key)
-    away_id = get_team_id(away, league_id, sport_key)
+    home_id = get_team_id(home, league_id)
+    away_id = get_team_id(away, league_id)
     if not home_id or not away_id:
         return None
 
-    season = get_current_season(sport_key)
-    fixture_corners = {}
-    fixture_cards = {}
+    season = get_current_season()
+    all_corners = []
+    all_cards = []
 
-    for team_id, side in [(home_id, "home"), (away_id, "away")]:
+    for team_id in [home_id, away_id]:
         fixtures = api_football_get("fixtures", {
             "team": team_id, "last": 6,
             "season": season, "status": "FT"
@@ -262,9 +223,9 @@ def analyze_corners_cards(home, away, league_id, sport_key=None):
             continue
         count = 0
         for f in fixtures:
-            if count >= 3:
+            if count >= 5:
                 break
-            if get_request_count() >= 55:
+            if get_request_count() >= 85:
                 break
             fid = f["fixture"]["id"]
             stats = api_football_get("fixtures/statistics", {"fixture": fid})
@@ -276,42 +237,28 @@ def analyze_corners_cards(home, away, league_id, sport_key=None):
                             continue
                         try:
                             if s["type"] == "Corner Kicks":
-                                if fid not in fixture_corners:
-                                    fixture_corners[fid] = {}
-                                fixture_corners[fid][side] = int(val)
+                                all_corners.append(int(val))
                             elif s["type"] == "Yellow Cards":
-                                if fid not in fixture_cards:
-                                    fixture_cards[fid] = {}
-                                fixture_cards[fid][side] = int(val)
+                                all_cards.append(int(val))
                         except:
                             pass
             count += 1
 
-    all_corners = []
-    for fid, sides in fixture_corners.items():
-        if "home" in sides and "away" in sides:
-            all_corners.append(sides["home"] + sides["away"])
-
-    all_cards = []
-    for fid, sides in fixture_cards.items():
-        if "home" in sides and "away" in sides:
-            all_cards.append(sides["home"] + sides["away"])
-
-    if len(all_corners) < 4 or len(all_cards) < 4:
+    if len(all_corners) < 6 or len(all_cards) < 6:
         print(f"Datos insuficientes {home} vs {away}: corners={len(all_corners)}, cards={len(all_cards)}")
         return None
 
-    avg_c = round(sum(all_corners) / len(all_corners), 1)
-    avg_k = round(sum(all_cards) / len(all_cards), 1)
+    avg_c = round(sum(all_corners) / len(all_corners) * 2, 1)
+    avg_k = round(sum(all_cards) / len(all_cards) * 2, 1)
     n = len(all_corners)
 
     return {
         "corners_avg": avg_c,
         "cards_avg": avg_k,
-        "corners_over95_prob": int(sum(1 for c in all_corners if c > 9.5) / n * 100),
-        "corners_over105_prob": int(sum(1 for c in all_corners if c > 10.5) / n * 100),
-        "cards_over35_prob": int(sum(1 for k in all_cards if k > 3.5) / n * 100),
-        "cards_over45_prob": int(sum(1 for k in all_cards if k > 4.5) / n * 100),
+        "corners_over95_prob": int(sum(1 for c in all_corners if c * 2 > 9.5) / n * 100),
+        "corners_over105_prob": int(sum(1 for c in all_corners if c * 2 > 10.5) / n * 100),
+        "cards_over35_prob": int(sum(1 for k in all_cards if k * 2 > 3.5) / n * 100),
+        "cards_over45_prob": int(sum(1 for k in all_cards if k * 2 > 4.5) / n * 100),
         "sample": n
     }
 
@@ -369,7 +316,8 @@ def is_useful_hour():
 
 def get_todays_picks():
     today = datetime.now(TZ).strftime("%Y-%m-%d")
-    print(f"Analizando: {today} | Requests usados: {get_request_count()}/100")
+    season = get_current_season()
+    print(f"Analizando: {today} | Temporada: {season} | Requests usados: {get_request_count()}/100")
 
     main_picks = []
     stats_picks = []
@@ -383,14 +331,6 @@ def get_todays_picks():
             url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
             params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h,totals,btts", "oddsFormat": "decimal"}
             r = requests.get(url, params=params)
-
-            # DEBUG TEMPORAL: ver que devuelve la Odds API
-            print(f"[{sport_key}] HTTP {r.status_code} | juegos={len(r.json()) if r.status_code == 200 else 'ERROR: ' + r.text[:100]}")
-            if r.status_code == 200 and r.json():
-                ejemplo = r.json()[0]
-                print(f"  commence_time ejemplo: {ejemplo.get('commence_time')} | today buscado: {today}")
-            # FIN DEBUG
-
             if r.status_code != 200:
                 continue
 
@@ -409,7 +349,7 @@ def get_todays_picks():
                 if not bookmakers:
                     continue
 
-                stats = get_goals_and_form(home, away, league_id, sport_key)
+                stats = get_goals_and_form(home, away, league_id)
                 best = get_best_market(home, away, bookmakers, stats)
                 if best:
                     main_picks.append({
@@ -420,8 +360,8 @@ def get_todays_picks():
                         "prob": best["prob"],
                     })
 
-                if get_request_count() < 50:
-                    cc = analyze_corners_cards(home, away, league_id, sport_key)
+                if get_request_count() < 80:
+                    cc = analyze_corners_cards(home, away, league_id)
                     if cc:
                         if cc["corners_over95_prob"] >= 65:
                             stats_picks.append({
@@ -505,12 +445,10 @@ def send_picks(main_picks, stats_picks, title="Picks del dia"):
 
     for p in new_main + new_stats:
         sent_picks.add(f"{p['match']}-{p['bet']}")
-    save_sent_picks(sent_picks)
 
 def daily_analysis():
     print("Analisis diario 00:00...")
     sent_picks.clear()
-    save_sent_picks(sent_picks)
     cache.clear()
     save_request_count(0)
     main_picks, stats_picks = get_todays_picks()
@@ -532,11 +470,7 @@ def check_new_opportunities():
 
 print("Bot IvanPicks iniciando...")
 send_telegram("\U0001f916 Bot IvanPicks iniciado y activo!")
-
-if not sent_picks:
-    daily_analysis()
-else:
-    print("Picks del dia ya enviados previamente, saltando analisis inicial")
+daily_analysis()
 
 schedule.every().day.at("03:00").do(daily_analysis)
 schedule.every(2).hours.do(check_new_opportunities)
