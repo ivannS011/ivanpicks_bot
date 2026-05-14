@@ -513,6 +513,14 @@ def best_odds_pick(home, away, bookmakers, stats):
 def get_todays_picks():
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     print(f"\n{'='*50}\nAnálisis: {today} | APIF: {load_req()}/100\n{'='*50}")
+
+    # ── DIAGNÓSTICO TEMPORAL ──────────────────────────────────────────────────
+    print(f"[DIAG] TZ now: {datetime.now(TZ).isoformat()}")
+    print(f"[DIAG] ODDS_API_KEY cargada: {'SI' if ODDS_API_KEY else 'NO'} | primeros chars: {ODDS_API_KEY[:6] if ODDS_API_KEY else 'None'}")
+    print(f"[DIAG] API_FOOTBALL_KEY cargada: {'SI' if API_FOOTBALL_KEY else 'NO'} | primeros chars: {API_FOOTBALL_KEY[:6] if API_FOOTBALL_KEY else 'None'}")
+    print(f"[DIAG] TELEGRAM_TOKEN cargada: {'SI' if TELEGRAM_TOKEN else 'NO'}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     odds_picks, stats_picks, player_picks = [], [], []
     analyzed = 0
 
@@ -526,6 +534,20 @@ def get_todays_picks():
                         "markets": "h2h,totals,btts", "oddsFormat": "decimal"},
                 timeout=10,
             )
+
+            # ── DIAGNÓSTICO TEMPORAL ─────────────────────────────────────────
+            print(f"[DIAG] {league_name} → HTTP {r.status_code}")
+            if r.status_code != 200:
+                print(f"[DIAG] Respuesta error: {r.text[:200]}")
+            else:
+                games_today = [g for g in r.json() if today in g.get("commence_time", "")]
+                games_total = len(r.json())
+                print(f"[DIAG] {league_name} → total partidos API: {games_total} | con fecha {today}: {len(games_today)}")
+                if games_total > 0:
+                    sample = r.json()[0].get("commence_time", "sin fecha")
+                    print(f"[DIAG] Ejemplo commence_time: {sample}")
+            # ────────────────────────────────────────────────────────────────
+
             if r.status_code != 200:
                 continue
             league_count = 0
