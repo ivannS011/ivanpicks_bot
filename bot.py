@@ -13,12 +13,10 @@ API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 
 TZ = pytz.timezone("America/Argentina/Buenos_Aires")
 
-# FIX #1: rutas persistentes relativas al directorio del script, no /tmp/
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 REQUESTS_FILE = os.path.join(BASE_DIR, "api_requests.json")
 SENT_PICKS_FILE = os.path.join(BASE_DIR, "sent_picks.json")
 
-# FIX #2: ligas sudamericanas usan temporada por año calendario
 SOUTH_AMERICAN_LEAGUES = {
     "soccer_argentina_primera_division",
     "soccer_brazil_campeonato",
@@ -63,7 +61,6 @@ LEAGUE_INFO = {
 
 cache = {}
 
-# FIX #2: season depende de si la liga es sudamericana/calendario o europea
 def get_current_season(sport_key=None):
     now = datetime.now(TZ)
     if sport_key and sport_key in SOUTH_AMERICAN_LEAGUES:
@@ -244,7 +241,6 @@ def get_goals_and_form(home, away, league_id, sport_key=None):
     return None
 
 def analyze_corners_cards(home, away, league_id, sport_key=None):
-    # FIX #3: umbral mas conservador para no agotar requests
     if get_request_count() >= 50:
         return None
 
@@ -254,7 +250,6 @@ def analyze_corners_cards(home, away, league_id, sport_key=None):
         return None
 
     season = get_current_season(sport_key)
-
     fixture_corners = {}
     fixture_cards = {}
 
@@ -267,7 +262,6 @@ def analyze_corners_cards(home, away, league_id, sport_key=None):
             continue
         count = 0
         for f in fixtures:
-            # FIX #3: reducido de 5 a 3 partidos por equipo para ahorrar requests
             if count >= 3:
                 break
             if get_request_count() >= 55:
@@ -303,7 +297,6 @@ def analyze_corners_cards(home, away, league_id, sport_key=None):
         if "home" in sides and "away" in sides:
             all_cards.append(sides["home"] + sides["away"])
 
-    # FIX #3: umbral minimo reducido de 6 a 4 para compensar menos partidos analizados
     if len(all_corners) < 4 or len(all_cards) < 4:
         print(f"Datos insuficientes {home} vs {away}: corners={len(all_corners)}, cards={len(all_cards)}")
         return None
@@ -390,6 +383,14 @@ def get_todays_picks():
             url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
             params = {"apiKey": ODDS_API_KEY, "regions": "eu", "markets": "h2h,totals,btts", "oddsFormat": "decimal"}
             r = requests.get(url, params=params)
+
+            # DEBUG TEMPORAL: ver que devuelve la Odds API
+            print(f"[{sport_key}] HTTP {r.status_code} | juegos={len(r.json()) if r.status_code == 200 else 'ERROR: ' + r.text[:100]}")
+            if r.status_code == 200 and r.json():
+                ejemplo = r.json()[0]
+                print(f"  commence_time ejemplo: {ejemplo.get('commence_time')} | today buscado: {today}")
+            # FIN DEBUG
+
             if r.status_code != 200:
                 continue
 
@@ -408,7 +409,6 @@ def get_todays_picks():
                 if not bookmakers:
                     continue
 
-                # FIX #2: pasar sport_key para calcular season correctamente
                 stats = get_goals_and_form(home, away, league_id, sport_key)
                 best = get_best_market(home, away, bookmakers, stats)
                 if best:
@@ -420,7 +420,6 @@ def get_todays_picks():
                         "prob": best["prob"],
                     })
 
-                # FIX #3: umbral conservador, solo si quedan mas de 50 requests libres
                 if get_request_count() < 50:
                     cc = analyze_corners_cards(home, away, league_id, sport_key)
                     if cc:
