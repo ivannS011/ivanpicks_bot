@@ -1,6 +1,0 @@
-__pycache__/
-*.pyc
-.env
-api_requests.json
-venv/
-.venv/
