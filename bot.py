@@ -20,16 +20,9 @@ CARD_LINES    = [1.5, 2.5, 3.5, 4.5]
 LEAGUE_INFO = {
     "soccer_epl":                        ("Premier League",   39),
     "soccer_spain_la_liga":              ("La Liga",          140),
-    "soccer_germany_bundesliga":         ("Bundesliga",        78),
     "soccer_italy_serie_a":              ("Serie A",          135),
-    "soccer_france_ligue_one":           ("Ligue 1",           61),
     "soccer_uefa_champs_league":         ("Champions League",   2),
-    "soccer_uefa_europa_league":         ("Europa League",      3),
-    "soccer_portugal_primeira_liga":     ("Primeira Liga",     94),
-    "soccer_netherlands_eredivisie":     ("Eredivisie",        88),
     "soccer_argentina_primera_division": ("Liga Argentina",   128),
-    "soccer_brazil_campeonato":          ("Brasileirao",       71),
-    "soccer_conmebol_copa_libertadores": ("Copa Libertadores", 13),
 }
 
 SENT_PICKS_FILE = "/tmp/sent_picks.json"
