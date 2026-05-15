@@ -14,34 +14,26 @@ REQUESTS_FILE = "/tmp/api_requests.json"
 MIN_PROB      = 60
 MIN_SAMPLE    = 5
 MAX_API_REQ   = 90
-FBREF_DELAY   = 4
 CORNER_LINES  = [7.5, 8.5, 9.5, 10.5, 11.5]
 CARD_LINES    = [1.5, 2.5, 3.5, 4.5]
 
 LEAGUE_INFO = {
-    "soccer_epl":                        ("🏴󠁧󠁢󠁥󠁮󠁧󠁿", "Premier League",   39,  "9"),
-    "soccer_spain_la_liga":              ("🇪🇸", "La Liga",          140, "12"),
-    "soccer_germany_bundesliga":         ("🇩🇪", "Bundesliga",        78, "20"),
-    "soccer_italy_serie_a":              ("🇮🇹", "Serie A",          135, "11"),
-    "soccer_france_ligue_one":           ("🇫🇷", "Ligue 1",           61, "13"),
-    "soccer_uefa_champs_league":         ("⭐",  "Champions League",   2,  "8"),
-    "soccer_uefa_europa_league":         ("🟠",  "Europa League",      3, "19"),
-    "soccer_portugal_primeira_liga":     ("🇵🇹", "Primeira Liga",     94, "32"),
-    "soccer_netherlands_eredivisie":     ("🇳🇱", "Eredivisie",        88, "23"),
-    "soccer_argentina_primera_division": ("🇦🇷", "Liga Argentina",   128, None),
-    "soccer_brazil_campeonato":          ("🇧🇷", "Brasileirao",       71, None),
-    "soccer_conmebol_copa_libertadores": ("🌎",  "Copa Libertadores", 13, None),
+    "soccer_epl":                        ("Premier League",   39),
+    "soccer_spain_la_liga":              ("La Liga",          140),
+    "soccer_germany_bundesliga":         ("Bundesliga",        78),
+    "soccer_italy_serie_a":              ("Serie A",          135),
+    "soccer_france_ligue_one":           ("Ligue 1",           61),
+    "soccer_uefa_champs_league":         ("Champions League",   2),
+    "soccer_uefa_europa_league":         ("Europa League",      3),
+    "soccer_portugal_primeira_liga":     ("Primeira Liga",     94),
+    "soccer_netherlands_eredivisie":     ("Eredivisie",        88),
+    "soccer_argentina_primera_division": ("Liga Argentina",   128),
+    "soccer_brazil_campeonato":          ("Brasileirao",       71),
+    "soccer_conmebol_copa_libertadores": ("Copa Libertadores", 13),
 }
 
 SENT_PICKS_FILE = "/tmp/sent_picks.json"
-
-api_cache   = {}
-fbref_cache = {}
-
-FBREF_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9",
-}
+api_cache = {}
 def get_current_season():
     now = datetime.now(TZ)
     return now.year if now.month >= 7 else now.year - 1
@@ -183,189 +175,6 @@ def fixture_corners_cards(tid, n=8):
                 except:
                     pass
     return corners, cards
-def fbref_table(url, col):
-    try:
-        time.sleep(FBREF_DELAY + 1.0)
-        r = requests.get(url, headers=FBREF_HEADERS, timeout=20)
-        if r.status_code == 429:
-            print(f"[FBRef] Rate limited (429), esperando 60s...")
-            time.sleep(60)
-            r = requests.get(url, headers=FBREF_HEADERS, timeout=20)
-        if r.status_code != 200:
-            print(f"[FBRef] HTTP {r.status_code} en {url}")
-            return {}
-        html = r.text.replace("<!--", "").replace("-->", "")
-        for df in pd.read_html(StringIO(html)):
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = [" ".join(str(c) for c in x).strip() for x in df.columns]
-            cols = df.columns.tolist()
-            sc = next((c for c in cols if "Squad" in c), None)
-            vc = next((c for c in cols if c.strip() == col or c.endswith(f" {col}")), None)
-            if sc and vc:
-                out = {}
-                for _, row in df.iterrows():
-                    name = str(row[sc]).strip()
-                    try:
-                        val = float(str(row[vc]).replace(",", "."))
-                        if name and name.lower() not in ("squad", "nan"):
-                            out[name] = val
-                    except:
-                        pass
-                if out:
-                    return out
-    except Exception as e:
-        print(f"[FBRef] {e}")
-    return {}
-
-def fbref_comp(comp_id):
-    if comp_id in fbref_cache:
-        return fbref_cache[comp_id]
-    s = get_current_season()
-    base = f"https://fbref.com/en/comps/{comp_id}/{s}-{s+1}"
-    shooting = fbref_table(f"{base}/shooting/", "Sh/90")
-    corners  = fbref_table(f"{base}/misc/",     "CK")
-    cards    = fbref_table(f"{base}/misc/",     "CrdY")
-    saves    = fbref_table(f"{base}/keepers/",  "Saves")
-    mp       = fbref_table(f"{base}/keepers/",  "MP")
-    data = {
-        team: {
-            "shots_p90": shooting.get(team),
-            "corners":   corners.get(team),
-            "yellow":    cards.get(team),
-            "saves":     saves.get(team),
-            "mp":        mp.get(team),
-        }
-        for team in set(shooting) | set(corners) | set(cards)
-    }
-    fbref_cache[comp_id] = data
-    print(f"[FBRef] Comp {comp_id}: {len(data)} equipos")
-    return data
-
-def fbref_team(name, comp_id):
-    if not comp_id:
-        return None
-    data = fbref_comp(comp_id)
-    if not data:
-        return None
-    name_lower = name.lower().strip()
-    if name in data:
-        return data[name]
-    for k, v in data.items():
-        if k.lower() == name_lower:
-            return v
-    name_words = [w for w in name_lower.split() if len(w) >= 4]
-    scored = []
-    for k, v in data.items():
-        k_lower = k.lower()
-        score = sum(1 for w in name_words if w in k_lower)
-        if score > 0:
-            scored.append((score, k, v))
-    if scored:
-        scored.sort(key=lambda x: -x[0])
-        if len(scored) == 1 or scored[0][0] > scored[1][0]:
-            return scored[0][2]
-    return None
-
-def fbref_players(home, away, comp_id):
-    if not comp_id:
-        return []
-    s = get_current_season()
-    base  = f"https://fbref.com/en/comps/{comp_id}/{s}-{s+1}"
-    picks = []
-
-    def get_df(url):
-        try:
-            time.sleep(FBREF_DELAY + 1.0)
-            r = requests.get(url, headers=FBREF_HEADERS, timeout=20)
-            if r.status_code == 429:
-                print(f"[FBRef players] Rate limited, esperando 60s...")
-                time.sleep(60)
-                r = requests.get(url, headers=FBREF_HEADERS, timeout=20)
-            if r.status_code != 200:
-                return None
-            html = r.text.replace("<!--", "").replace("-->", "")
-            for df in pd.read_html(StringIO(html)):
-                if isinstance(df.columns, pd.MultiIndex):
-                    df.columns = [" ".join(str(c) for c in x).strip() for x in df.columns]
-                cols = df.columns.tolist()
-                if next((c for c in cols if "Player" in c), None) and next((c for c in cols if "Squad" in c), None):
-                    return (df, cols)
-        except:
-            pass
-        return None
-
-    def squad_mask(df, scol, team_name):
-        team_words = [w for w in team_name.lower().split() if len(w) >= 4]
-        if not team_words:
-            return df[scol].astype(str).str.lower().str.contains(team_name.lower().split()[0])
-        mask = None
-        for w in team_words:
-            m = df[scol].astype(str).str.lower().str.contains(w)
-            mask = m if mask is None else (mask | m)
-        return mask
-
-    result = get_df(f"{base}/shooting/")
-    if result:
-        try:
-            df, cols = result
-            pcol = next((c for c in cols if "Player" in c), None)
-            scol = next((c for c in cols if "Squad" in c), None)
-            vcol = next((c for c in cols if c.strip() == "SoT/90" or c.endswith(" SoT/90")), None)
-            if pcol and scol and vcol:
-                for team in [home, away]:
-                    mask = squad_mask(df, scol, team)
-                    tdf  = df[mask].copy()
-                    tdf["_v"] = pd.to_numeric(tdf[vcol], errors="coerce")
-                    for _, row in tdf.nlargest(2, "_v").iterrows():
-                        try:
-                            val = float(str(row[vcol]).replace(",", "."))
-                            if val >= 1.0:
-                                picks.append({"type": "player_sot", "player": str(row[pcol]).strip(),
-                                              "team": team, "stat": f"Tiros a puerta: {val:.1f}/90"})
-                        except:
-                            pass
-        except Exception as e:
-            print(f"[FBRef players shooting] {e}")
-
-    result = get_df(f"{base}/keepers/")
-    if result:
-        try:
-            df, cols = result
-            pcol  = next((c for c in cols if "Player" in c), None)
-            scol  = next((c for c in cols if "Squad" in c), None)
-            mpcol = next((c for c in cols if c.strip() == "MP" or c.endswith(" MP")), None)
-            svcol = next((c for c in cols if c.strip() == "Saves" or c.endswith(" Saves")), None)
-            sppct = next((c for c in cols if "Save%" in c), None)
-            if pcol and scol and mpcol and svcol:
-                for team in [home, away]:
-                    mask = squad_mask(df, scol, team)
-                    tdf  = df[mask].copy()
-                    tdf["_mp"] = pd.to_numeric(tdf[mpcol], errors="coerce")
-                    for _, row in tdf.nlargest(1, "_mp").iterrows():
-                        try:
-                            sv = float(str(row[svcol]).replace(",", "."))
-                            mp = float(str(row[mpcol]).replace(",", "."))
-                            sp = float(str(row[sppct]).replace(",", ".")) if sppct else None
-                            if mp > 0:
-                                picks.append({"type": "keeper", "player": str(row[pcol]).strip(),
-                                              "team": team, "stat": f"Paradas: {round(sv/mp,1)}/partido",
-                                              "note": f"Save%: {sp}%" if sp else ""})
-                        except:
-                            pass
-        except Exception as e:
-            print(f"[FBRef players keepers] {e}")
-
-    return picks
-def _goals_from_list(goals_list):
-    n = len(goals_list)
-    if n == 0:
-        return None
-    return {
-        "over25_prob":  int(sum(1 for g in goals_list if g > 2.5) / n * 100),
-        "under25_prob": int(sum(1 for g in goals_list if g < 2.5) / n * 100),
-        "over15_prob":  int(sum(1 for g in goals_list if g > 1.5) / n * 100),
-    }
-
 def poisson_prob_over(lam, threshold):
     if lam <= 0:
         return 0
@@ -380,7 +189,7 @@ def poisson_prob_under(lam, threshold):
     prob_under = sum(poisson.pmf(i, lam) for i in range(0, k))
     return max(0, min(int(prob_under * 100), 95))
 
-def analyze_goals(home, away, league_id, fbref_id):
+def analyze_goals(home, away, league_id):
     hid = team_id(home, league_id)
     aid = team_id(away, league_id)
 
@@ -403,8 +212,13 @@ def analyze_goals(home, away, league_id, fbref_id):
             else:
                 hg_list.append(ag); ag_list.append(hg)
         n = len(h2h)
-        stats = _goals_from_list(goals)
-        stats.update({
+        over25  = int(sum(1 for g in goals if g > 2.5) / n * 100)
+        under25 = int(sum(1 for g in goals if g < 2.5) / n * 100)
+        over15  = int(sum(1 for g in goals if g > 1.5) / n * 100)
+        return {
+            "over25_prob":    over25,
+            "under25_prob":   under25,
+            "over15_prob":    over15,
             "btts_prob":      int(sum(btts) / n * 100),
             "ht_over15_prob": int(sum(1 for g in ht_goals if g > 1.5) / n * 100),
             "home_goals":     hg_list,
@@ -412,8 +226,7 @@ def analyze_goals(home, away, league_id, fbref_id):
             "avg_goals":      round(sum(goals) / n, 1),
             "sample":         n,
             "source":         "h2h",
-        })
-        return stats
+        }
 
     hf = team_form(hid) if hid else None
     af = team_form(aid) if aid else None
@@ -426,21 +239,15 @@ def analyze_goals(home, away, league_id, fbref_id):
     lam_total = lam_home + lam_away
     lam_ht    = (hf.get("avg_ht_for", 0.0) + af.get("avg_ht_for", 0.0)) / 2 * 2
 
-    over25    = poisson_prob_over(lam_total, 2.5)
-    under25   = poisson_prob_under(lam_total, 2.5)
-    over15    = poisson_prob_over(lam_total, 1.5)
-    ht_over15 = poisson_prob_over(lam_ht,   1.5)
-
     p_home_scores = int((1 - poisson.pmf(0, lam_home)) * 100)
     p_away_scores = int((1 - poisson.pmf(0, lam_away)) * 100)
-    btts_prob = int(p_home_scores * p_away_scores / 100)
 
     return {
-        "over25_prob":    over25,
-        "under25_prob":   under25,
-        "over15_prob":    over15,
-        "btts_prob":      btts_prob,
-        "ht_over15_prob": ht_over15,
+        "over25_prob":    poisson_prob_over(lam_total, 2.5),
+        "under25_prob":   poisson_prob_under(lam_total, 2.5),
+        "over15_prob":    poisson_prob_over(lam_total, 1.5),
+        "btts_prob":      int(p_home_scores * p_away_scores / 100),
+        "ht_over15_prob": poisson_prob_over(lam_ht, 1.5),
         "home_goals":     hf.get("goals_list", []),
         "away_goals":     af.get("goals_list", []),
         "home_form":      hf["win_rate"],
@@ -450,58 +257,41 @@ def analyze_goals(home, away, league_id, fbref_id):
         "source":         "form",
     }
 
-def analyze_cc(home, away, league_id, fbref_id):
+def analyze_cc(home, away, league_id):
     res = {k: None for k in [
-        "corners_total", "corners_1h", "corners_home", "corners_away",
-        "cards_total",   "cards_1h",   "cards_home",   "cards_away",
-        "corners_avg",   "cards_avg",  "source",
+        "corners_total", "corners_home", "corners_away",
+        "cards_total",   "cards_home",   "cards_away",
+        "corners_avg",   "cards_avg",    "source",
     ]}
     res["source"] = "none"
-
-    fh = fbref_team(home, fbref_id)
-    fa = fbref_team(away, fbref_id)
 
     hid = team_id(home, league_id)
     aid = team_id(away, league_id)
 
-    if hid and aid and load_req() < 80:
-        hc_list, hk_list = fixture_corners_cards(hid, n=8)
-        ac_list, ak_list = fixture_corners_cards(aid, n=8)
+    if not hid or not aid or load_req() >= 80:
+        return res
 
-        min_c = min(len(hc_list), len(ac_list))
-        min_k = min(len(hk_list), len(ak_list))
+    hc_list, hk_list = fixture_corners_cards(hid, n=8)
+    ac_list, ak_list = fixture_corners_cards(aid, n=8)
 
-        if min_c >= MIN_SAMPLE:
-            tc_list = [hc_list[i] + ac_list[i] for i in range(min_c)]
-            res["corners_total"] = find_best_line(tc_list, CORNER_LINES, "corners")
-            res["corners_home"]  = find_best_line(hc_list[:min_c], [3.5, 4.5, 5.5, 6.5], f"corners ({home})")
-            res["corners_away"]  = find_best_line(ac_list[:min_c], [3.5, 4.5, 5.5, 6.5], f"corners ({away})")
-            res["corners_avg"]   = round(sum(tc_list) / len(tc_list), 1)
-            res["source"]        = "api_football"
+    min_c = min(len(hc_list), len(ac_list))
+    min_k = min(len(hk_list), len(ak_list))
 
-        if min_k >= MIN_SAMPLE:
-            tk_list = [hk_list[i] + ak_list[i] for i in range(min_k)]
-            res["cards_total"] = find_best_line(tk_list, CARD_LINES, "tarjetas")
-            res["cards_home"]  = find_best_line(hk_list[:min_k], [0.5, 1.5, 2.5], f"tarjetas ({home})")
-            res["cards_away"]  = find_best_line(ak_list[:min_k], [0.5, 1.5, 2.5], f"tarjetas ({away})")
-            res["cards_avg"]   = round(sum(tk_list) / len(tk_list), 1)
-            if res["source"] != "api_football":
-                res["source"] = "api_football"
+    if min_c >= MIN_SAMPLE:
+        tc_list = [hc_list[i] + ac_list[i] for i in range(min_c)]
+        res["corners_total"] = find_best_line(tc_list, CORNER_LINES, "corners")
+        res["corners_home"]  = find_best_line(hc_list[:min_c], [3.5, 4.5, 5.5, 6.5], f"corners ({home})")
+        res["corners_away"]  = find_best_line(ac_list[:min_c], [3.5, 4.5, 5.5, 6.5], f"corners ({away})")
+        res["corners_avg"]   = round(sum(tc_list) / len(tc_list), 1)
+        res["source"]        = "api_football"
 
-        if res["corners_total"] is not None or res["cards_total"] is not None:
-            return res
-
-    if fh and fa:
-        def pm(val, mp): return val / mp if val and mp and mp > 0 else None
-        ch = pm(fh.get("corners"), fh.get("mp"))
-        ca = pm(fa.get("corners"), fa.get("mp"))
-        kh = pm(fh.get("yellow"),  fh.get("mp"))
-        ka = pm(fa.get("yellow"),  fa.get("mp"))
-        if ch and ca:
-            res["corners_avg"] = round(ch + ca, 1)
-            res["cards_avg"]   = round((kh or 0) + (ka or 0), 1)
-            res["source"]      = "fbref_avg_only"
-            print(f"[FBRef fallback] {home} vs {away}: corners_avg={res['corners_avg']}, cards_avg={res['cards_avg']}")
+    if min_k >= MIN_SAMPLE:
+        tk_list = [hk_list[i] + ak_list[i] for i in range(min_k)]
+        res["cards_total"] = find_best_line(tk_list, CARD_LINES, "tarjetas")
+        res["cards_home"]  = find_best_line(hk_list[:min_k], [0.5, 1.5, 2.5], f"tarjetas ({home})")
+        res["cards_away"]  = find_best_line(ak_list[:min_k], [0.5, 1.5, 2.5], f"tarjetas ({away})")
+        res["cards_avg"]   = round(sum(tk_list) / len(tk_list), 1)
+        res["source"]      = "api_football"
 
     return res
 def best_odds_pick(home, away, bookmakers, stats):
@@ -540,10 +330,10 @@ def best_odds_pick(home, away, bookmakers, stats):
 def get_todays_picks():
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     print(f"\n{'='*50}\nAnalisis: {today} | APIF: {load_req()}/100\n{'='*50}")
-    odds_picks, stats_picks, player_picks = [], [], []
+    odds_picks, stats_picks = [], []
     analyzed = 0
 
-    for sport_key, (flag, league_name, league_id, fbref_id) in LEAGUE_INFO.items():
+    for sport_key, (league_name, league_id) in LEAGUE_INFO.items():
         if load_req() >= MAX_API_REQ:
             break
         try:
@@ -568,10 +358,10 @@ def get_todays_picks():
                     continue
                 print(f"[{league_name}] {home} vs {away}")
 
-                stats = analyze_goals(home, away, league_id, fbref_id)
+                stats = analyze_goals(home, away, league_id)
                 pick  = best_odds_pick(home, away, bm, stats)
                 if pick:
-                    odds_picks.append({"match": f"{home} vs {away}", "league": f"{flag} {league_name}", **pick})
+                    odds_picks.append({"match": f"{home} vs {away}", "league": league_name, **pick})
 
                 if stats:
                     for goal_list, label in [
@@ -582,26 +372,22 @@ def get_todays_picks():
                             p = find_best_line(goal_list, [0.5, 1.5], f"goles ({label})")
                             if p:
                                 stats_picks.append({
-                                    "match": f"{home} vs {away}", "league": f"{flag} {league_name}",
+                                    "match": f"{home} vs {away}", "league": league_name,
                                     "bet": p["bet"], "prob": p["prob"],
-                                    "avg": stats["avg_goals"], "sample": stats["sample"], "source": "goals",
+                                    "avg": stats["avg_goals"], "sample": stats["sample"],
                                 })
 
-                cc = analyze_cc(home, away, league_id, fbref_id)
-                for field in ["corners_total", "corners_1h", "corners_home", "corners_away",
-                              "cards_total",   "cards_1h",   "cards_home",   "cards_away"]:
+                cc = analyze_cc(home, away, league_id)
+                for field in ["corners_total", "corners_home", "corners_away",
+                              "cards_total",   "cards_home",   "cards_away"]:
                     p = cc.get(field)
                     if p:
                         avg = cc.get("corners_avg") if "corner" in field else cc.get("cards_avg")
                         stats_picks.append({
-                            "match": f"{home} vs {away}", "league": f"{flag} {league_name}",
+                            "match": f"{home} vs {away}", "league": league_name,
                             "bet": p["bet"], "prob": p["prob"], "avg": avg,
                             "sample": "ultimos partidos",
-                            "source": cc["source"],
                         })
-
-                if fbref_id:
-                    player_picks.extend(fbref_players(home, away, fbref_id))
 
                 league_count += 1
                 analyzed += 1
@@ -623,12 +409,12 @@ def get_todays_picks():
                 out.append(p)
         return out
 
-    return dedup(odds_picks)[:10], dedup(stats_picks)[:8], player_picks[:6]
-def send_picks(odds_picks, stats_picks, player_picks, title="Picks del dia"):
+    return dedup(odds_picks)[:10], dedup(stats_picks)[:8]
+def send_picks(odds_picks, stats_picks, title="Picks del dia"):
     sent_picks = load_sent_picks()
     new_o = [p for p in odds_picks  if f"{p['match']}-{p['bet']}" not in sent_picks]
     new_s = [p for p in stats_picks if f"{p['match']}-{p['bet']}" not in sent_picks]
-    if not new_o and not new_s and not player_picks:
+    if not new_o and not new_s:
         print("Sin picks nuevos")
         return
 
@@ -650,15 +436,6 @@ def send_picks(odds_picks, stats_picks, player_picks, title="Picks del dia"):
                 msg += f" | Prom: {p['avg']}"
             msg += f" | Muestra: {p['sample']}\n\n"
 
-    if player_picks:
-        msg += "STATS DE JUGADORES (FBRef)\n\n"
-        for p in player_picks:
-            icon = "Arquero" if p["type"] == "keeper" else "Jugador"
-            msg += f"{icon}: {p['player']} ({p['team']})\n   {p['stat']}"
-            if p.get("note"):
-                msg += f" | {p['note']}"
-            msg += "\n\n"
-
     msg += "Apostá con responsabilidad."
     send_telegram(msg)
 
@@ -669,27 +446,26 @@ def send_picks(odds_picks, stats_picks, player_picks, title="Picks del dia"):
 def daily_analysis():
     print("\n[CRON 03:00] Analisis diario...")
     api_cache.clear()
-    fbref_cache.clear()
-    o, s, p = get_todays_picks()
-    send_picks(o, s, p, "Picks del dia")
+    o, s = get_todays_picks()
+    send_picks(o, s, "Picks del dia")
 
 def check_new_opportunities():
     if not is_useful_hour() or load_req() >= MAX_API_REQ:
         return
     print("[CRON 2H] Revisando...")
     api_cache.clear()
-    o, s, p = get_todays_picks()
+    o, s = get_todays_picks()
     sent_picks = load_sent_picks()
     no = [x for x in o if f"{x['match']}-{x['bet']}" not in sent_picks]
     ns = [x for x in s if f"{x['match']}-{x['bet']}" not in sent_picks]
     if no or ns:
-        send_picks(no[:3], ns[:3], p[:2], "Nueva oportunidad!")
+        send_picks(no[:3], ns[:3], "Nueva oportunidad!")
     else:
         print("[CRON 2H] Sin picks nuevos")
 
 if __name__ == "__main__":
     print("Bot IvanPicks iniciando...")
-    send_telegram("Bot IvanPicks iniciado - Fuentes: Odds API + API-Football + FBRef")
+    send_telegram("Bot IvanPicks iniciado - Fuentes: Odds API + API-Football")
     daily_analysis()
     schedule.every().day.at("03:00").do(daily_analysis)
     schedule.every(2).hours.do(check_new_opportunities)
