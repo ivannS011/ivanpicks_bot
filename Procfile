@@ -1,1 +1,1 @@
-worker: python ivanpicks_bot.py
+worker: python bot.py
