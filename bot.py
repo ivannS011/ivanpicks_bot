@@ -1,4 +1,4 @@
-import os, requests, time, schedule, json
+import os, requests, time, schedule, json, math
 from datetime import datetime
 from io import StringIO
 import pytz, pandas as pd
@@ -91,6 +91,10 @@ def find_best_line(values, lines, label):
         over_prob  = int(sum(1 for v in values if v > line) / n * 100)
         under_prob = int(sum(1 for v in values if v < line) / n * 100)
         if over_prob >= MIN_PROB and under_prob >= MIN_PROB:
+            prob = max(over_prob, under_prob)
+            bet  = f"Mas de {line} {label}" if over_prob >= under_prob else f"Menos de {line} {label}"
+            if prob > best_prob:
+                best_prob, best = prob, {"bet": bet, "prob": prob}
             continue
         for prob, bet in [
             (over_prob,  f"Mas de {line} {label}"),
@@ -120,6 +124,24 @@ def apif(endpoint, params):
 def team_id(name, league_id):
     data = apif("teams", {"name": name, "league": league_id, "season": get_current_season()})
     return data[0]["team"]["id"] if data else None
+
+def normalize(name):
+    return name.lower().strip()
+
+def team_id_fuzzy(name, league_id):
+    tid = team_id(name, league_id)
+    if tid:
+        return tid
+    data = apif("teams", {"league": league_id, "season": get_current_season()})
+    name_n = normalize(name)
+    for t in data:
+        tname = normalize(t["team"]["name"])
+        if name_n in tname or tname in name_n:
+            return t["team"]["id"]
+        words = [w for w in name_n.split() if len(w) >= 4]
+        if any(w in tname for w in words):
+            return t["team"]["id"]
+    return None
 
 def team_form(tid):
     fx = apif("fixtures", {"team": tid, "last": 8, "season": get_current_season(), "status": "FT"})
@@ -152,15 +174,17 @@ def team_form(tid):
 
 def fixture_corners_cards(tid, n=8):
     if load_req() >= 80:
-        return [], []
+        return [], [], []
     fx = apif("fixtures", {"team": tid, "last": n, "season": get_current_season(), "status": "FT"})
-    corners, cards = [], []
+    corners, cards, totals = [], [], []
     for f in fx[:8]:
         if load_req() >= 85:
             break
+        home_corners, away_corners = None, None
+        home_cards, away_cards = None, None
+        tid_is_home = f["teams"]["home"]["id"] == tid
         for ts in apif("fixtures/statistics", {"fixture": f["fixture"]["id"]}):
-            if ts.get("team", {}).get("id") != tid:
-                continue
+            is_home_team = ts.get("team", {}).get("id") == f["teams"]["home"]["id"]
             for s in ts.get("statistics", []):
                 val = s.get("value")
                 if val is None:
@@ -168,30 +192,41 @@ def fixture_corners_cards(tid, n=8):
                 try:
                     v = int(val)
                     if s["type"] == "Corner Kicks":
-                        corners.append(v)
+                        if is_home_team:
+                            home_corners = v
+                        else:
+                            away_corners = v
                     elif s["type"] == "Yellow Cards":
-                        cards.append(v)
+                        if is_home_team:
+                            home_cards = v
+                        else:
+                            away_cards = v
                 except:
                     pass
-    return corners, cards
-
+        if home_corners is not None and away_corners is not None:
+            total_c = home_corners + away_corners
+            totals.append(total_c)
+            corners.append(home_corners if tid_is_home else away_corners)
+        if home_cards is not None and away_cards is not None:
+            cards.append(home_cards if tid_is_home else away_cards)
+    return corners, cards, totals
 def poisson_prob_over(lam, threshold):
     if lam <= 0:
         return 0
-    k = int(threshold)
+    k = math.floor(threshold)
     prob_under_eq = sum(poisson.pmf(i, lam) for i in range(0, k + 1))
     return max(0, min(int((1 - prob_under_eq) * 100), 95))
 
 def poisson_prob_under(lam, threshold):
     if lam <= 0:
         return 95
-    k = int(threshold)
-    prob_under = sum(poisson.pmf(i, lam) for i in range(0, k))
+    k = math.floor(threshold)
+    prob_under = sum(poisson.pmf(i, lam) for i in range(0, k + 1))
     return max(0, min(int(prob_under * 100), 95))
 
 def analyze_goals(home, away, league_id):
-    hid = team_id(home, league_id)
-    aid = team_id(away, league_id)
+    hid = team_id_fuzzy(home, league_id)
+    aid = team_id_fuzzy(away, league_id)
 
     h2h = []
     if hid and aid:
@@ -256,6 +291,7 @@ def analyze_goals(home, away, league_id):
         "sample":         min(hf["sample"], af["sample"]),
         "source":         "form",
     }
+
 def analyze_cc(home, away, league_id):
     res = {k: None for k in [
         "corners_total", "corners_home", "corners_away",
@@ -264,20 +300,22 @@ def analyze_cc(home, away, league_id):
     ]}
     res["source"] = "none"
 
-    hid = team_id(home, league_id)
-    aid = team_id(away, league_id)
+    hid = team_id_fuzzy(home, league_id)
+    aid = team_id_fuzzy(away, league_id)
 
     if not hid or not aid or load_req() >= 80:
         return res
 
-    hc_list, hk_list = fixture_corners_cards(hid, n=8)
-    ac_list, ak_list = fixture_corners_cards(aid, n=8)
+    hc_list, hk_list, h_totals = fixture_corners_cards(hid, n=8)
+    ac_list, ak_list, a_totals = fixture_corners_cards(aid, n=8)
 
     if len(hc_list) >= MIN_SAMPLE and len(ac_list) >= MIN_SAMPLE:
         avg_c_home = sum(hc_list) / len(hc_list)
         avg_c_away = sum(ac_list) / len(ac_list)
         avg_total  = avg_c_home + avg_c_away
-        res["corners_total"] = find_best_line(hc_list + ac_list, CORNER_LINES, "corners")
+        total_list = h_totals if len(h_totals) >= MIN_SAMPLE else \
+                     [avg_c_home + avg_c_away] * max(len(hc_list), len(ac_list))
+        res["corners_total"] = find_best_line(total_list, CORNER_LINES, "corners")
         res["corners_home"]  = find_best_line(hc_list, [3.5, 4.5, 5.5, 6.5], f"corners ({home})")
         res["corners_away"]  = find_best_line(ac_list, [3.5, 4.5, 5.5, 6.5], f"corners ({away})")
         res["corners_avg"]   = round(avg_total, 1)
@@ -293,7 +331,6 @@ def analyze_cc(home, away, league_id):
         res["source"]      = "api_football"
 
     return res
-
 def best_odds_pick(home, away, bookmakers, stats):
     if not stats:
         return None
@@ -315,13 +352,10 @@ def best_odds_pick(home, away, bookmakers, stats):
                 implied = round(1 / odd * 100, 1)
                 sp, label = None, name
                 for (k, n), (sk, lbl) in MAP.items():
-                    if mk == k and (n.lower() in name.lower() or name.lower() in n.lower()):
+                    if mk == k and (normalize(n) in normalize(name) or normalize(name) in normalize(n)):
                         btts_prob = stats.get("btts_prob")
                         if sk is None:
-                            if btts_prob is None:
-                                sp = None
-                            else:
-                                sp = 100 - btts_prob
+                            sp = 100 - btts_prob if btts_prob is not None else None
                         else:
                             sp = stats.get(sk)
                         label = lbl
@@ -333,6 +367,7 @@ def best_odds_pick(home, away, bookmakers, stats):
                     candidates.append({"bet": label, "odd": odd, "prob": sp, "value": round(value, 1)})
     candidates.sort(key=lambda x: (x["value"], x["prob"]), reverse=True)
     return candidates[0] if candidates else None
+
 def get_todays_picks():
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     print(f"\n{'='*50}\nAnalisis: {today} | APIF: {load_req()}/100\n{'='*50}")
@@ -416,12 +451,14 @@ def get_todays_picks():
         return out
 
     return dedup(odds_picks)[:10], dedup(stats_picks)[:8]
+
 def send_picks(odds_picks, stats_picks, title="Picks del dia"):
     sent_picks = load_sent_picks()
     new_o = [p for p in odds_picks  if f"{p['match']}-{p['bet']}" not in sent_picks]
     new_s = [p for p in stats_picks if f"{p['match']}-{p['bet']}" not in sent_picks]
     if not new_o and not new_s:
         print("Sin picks nuevos")
+        send_telegram(f"IvanPicks - {title}\nSin picks con valor hoy.")
         return
 
     casa = "STAKE" if len(new_o) >= 2 else "1XBET"
