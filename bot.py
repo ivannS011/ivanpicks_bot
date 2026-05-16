@@ -18,17 +18,18 @@ CORNER_LINES  = [7.5, 8.5, 9.5, 10.5, 11.5]
 CARD_LINES    = [1.5, 2.5, 3.5, 4.5]
 
 LEAGUE_INFO = {
-    "soccer_epl":                        ("🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League",   39),
-    "soccer_spain_la_liga":              ("🇪🇸 La Liga",          140),
-    "soccer_italy_serie_a":              ("🇮🇹 Serie A",          135),
-    "soccer_uefa_champs_league":         ("⭐ Champions League",   2),
-    "soccer_argentina_primera_division": ("🇦🇷 Liga Argentina",   128),
-    "soccer_germany_bundesliga":         ("🇩🇪 Bundesliga",        78),
-    "soccer_france_ligue_one":           ("🇫🇷 Ligue 1",           61),
+    "soccer_epl":                        ("Premier League",   39),
+    "soccer_spain_la_liga":              ("La Liga",          140),
+    "soccer_italy_serie_a":              ("Serie A",          135),
+    "soccer_uefa_champs_league":         ("Champions League",   2),
+    "soccer_argentina_primera_division": ("Liga Argentina",   128),
+    "soccer_germany_bundesliga":         ("Bundesliga",        78),
+    "soccer_france_ligue_one":           ("Ligue 1",           61),
 }
 
 SENT_PICKS_FILE = "/tmp/sent_picks.json"
 api_cache = {}
+
 def get_current_season():
     now = datetime.now(TZ)
     return now.year if now.month >= 7 else now.year - 1
@@ -87,14 +88,17 @@ def find_best_line(values, lines, label):
     n = len(values)
     best, best_prob = None, 0
     for line in lines:
+        over_prob  = int(sum(1 for v in values if v > line) / n * 100)
+        under_prob = int(sum(1 for v in values if v < line) / n * 100)
+        if over_prob >= MIN_PROB and under_prob >= MIN_PROB:
+            continue
         for prob, bet in [
-            (int(sum(1 for v in values if v > line) / n * 100), f"Mas de {line} {label}"),
-            (int(sum(1 for v in values if v < line) / n * 100), f"Menos de {line} {label}"),
+            (over_prob,  f"Mas de {line} {label}"),
+            (under_prob, f"Menos de {line} {label}"),
         ]:
             if prob >= MIN_PROB and prob > best_prob:
                 best_prob, best = prob, {"bet": bet, "prob": prob}
     return best
-
 def apif(endpoint, params):
     if load_req() >= MAX_API_REQ:
         return []
@@ -170,6 +174,7 @@ def fixture_corners_cards(tid, n=8):
                 except:
                     pass
     return corners, cards
+
 def poisson_prob_over(lam, threshold):
     if lam <= 0:
         return 0
@@ -251,7 +256,6 @@ def analyze_goals(home, away, league_id):
         "sample":         min(hf["sample"], af["sample"]),
         "source":         "form",
     }
-
 def analyze_cc(home, away, league_id):
     res = {k: None for k in [
         "corners_total", "corners_home", "corners_away",
@@ -269,26 +273,27 @@ def analyze_cc(home, away, league_id):
     hc_list, hk_list = fixture_corners_cards(hid, n=8)
     ac_list, ak_list = fixture_corners_cards(aid, n=8)
 
-    min_c = min(len(hc_list), len(ac_list))
-    min_k = min(len(hk_list), len(ak_list))
-
-    if min_c >= MIN_SAMPLE:
-        tc_list = [hc_list[i] + ac_list[i] for i in range(min_c)]
-        res["corners_total"] = find_best_line(tc_list, CORNER_LINES, "corners")
-        res["corners_home"]  = find_best_line(hc_list[:min_c], [3.5, 4.5, 5.5, 6.5], f"corners ({home})")
-        res["corners_away"]  = find_best_line(ac_list[:min_c], [3.5, 4.5, 5.5, 6.5], f"corners ({away})")
-        res["corners_avg"]   = round(sum(tc_list) / len(tc_list), 1)
+    if len(hc_list) >= MIN_SAMPLE and len(ac_list) >= MIN_SAMPLE:
+        avg_c_home = sum(hc_list) / len(hc_list)
+        avg_c_away = sum(ac_list) / len(ac_list)
+        avg_total  = avg_c_home + avg_c_away
+        res["corners_total"] = find_best_line(hc_list + ac_list, CORNER_LINES, "corners")
+        res["corners_home"]  = find_best_line(hc_list, [3.5, 4.5, 5.5, 6.5], f"corners ({home})")
+        res["corners_away"]  = find_best_line(ac_list, [3.5, 4.5, 5.5, 6.5], f"corners ({away})")
+        res["corners_avg"]   = round(avg_total, 1)
         res["source"]        = "api_football"
 
-    if min_k >= MIN_SAMPLE:
-        tk_list = [hk_list[i] + ak_list[i] for i in range(min_k)]
-        res["cards_total"] = find_best_line(tk_list, CARD_LINES, "tarjetas")
-        res["cards_home"]  = find_best_line(hk_list[:min_k], [0.5, 1.5, 2.5], f"tarjetas ({home})")
-        res["cards_away"]  = find_best_line(ak_list[:min_k], [0.5, 1.5, 2.5], f"tarjetas ({away})")
-        res["cards_avg"]   = round(sum(tk_list) / len(tk_list), 1)
+    if len(hk_list) >= MIN_SAMPLE and len(ak_list) >= MIN_SAMPLE:
+        avg_k_home = sum(hk_list) / len(hk_list)
+        avg_k_away = sum(ak_list) / len(ak_list)
+        res["cards_total"] = find_best_line(hk_list + ak_list, CARD_LINES, "tarjetas")
+        res["cards_home"]  = find_best_line(hk_list, [0.5, 1.5, 2.5], f"tarjetas ({home})")
+        res["cards_away"]  = find_best_line(ak_list, [0.5, 1.5, 2.5], f"tarjetas ({away})")
+        res["cards_avg"]   = round(avg_k_home + avg_k_away, 1)
         res["source"]      = "api_football"
 
     return res
+
 def best_odds_pick(home, away, bookmakers, stats):
     if not stats:
         return None
@@ -311,7 +316,14 @@ def best_odds_pick(home, away, bookmakers, stats):
                 sp, label = None, name
                 for (k, n), (sk, lbl) in MAP.items():
                     if mk == k and (n.lower() in name.lower() or name.lower() in n.lower()):
-                        sp = stats.get(sk) if sk else 100 - (stats.get("btts_prob") or 50)
+                        btts_prob = stats.get("btts_prob")
+                        if sk is None:
+                            if btts_prob is None:
+                                sp = None
+                            else:
+                                sp = 100 - btts_prob
+                        else:
+                            sp = stats.get(sk)
                         label = lbl
                         break
                 if sp is None:
@@ -321,7 +333,6 @@ def best_odds_pick(home, away, bookmakers, stats):
                     candidates.append({"bet": label, "odd": odd, "prob": sp, "value": round(value, 1)})
     candidates.sort(key=lambda x: (x["value"], x["prob"]), reverse=True)
     return candidates[0] if candidates else None
-
 def get_todays_picks():
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     print(f"\n{'='*50}\nAnalisis: {today} | APIF: {load_req()}/100\n{'='*50}")
@@ -447,7 +458,7 @@ def daily_analysis():
 def check_new_opportunities():
     if not is_useful_hour() or load_req() >= MAX_API_REQ:
         return
-    print("[CRON 2H] Revisando...")
+    print("[CRON 13:00] Revisando...")
     api_cache.clear()
     o, s = get_todays_picks()
     sent_picks = load_sent_picks()
@@ -456,7 +467,7 @@ def check_new_opportunities():
     if no or ns:
         send_picks(no[:3], ns[:3], "Nueva oportunidad!")
     else:
-        print("[CRON 2H] Sin picks nuevos")
+        print("[CRON 13:00] Sin picks nuevos")
 
 if __name__ == "__main__":
     print("Bot IvanPicks iniciando...")
