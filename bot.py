@@ -514,12 +514,10 @@ def send_picks(odds_picks, stats_picks, title="Picks del dia"):
     if new_o:
         msg += f"Casa: {casa}\n\n"
         for i, p in enumerate(new_o, 1):
-            msg += (f"Pick {i}\n{p['match']}\n{p['league']}\n"
-                    f"{p['bet']}\nCuota: {p['odd']} | Prob: {p['prob']}% | Valor: +{p['value']}%\n\n")
-                    if p.get("referee"):
-                        msg += f"Árbitro: {p['referee']['name']} | AM/p: {p['referee']['avg_yellows']} | Rojas/p: {p['referee']['avg_reds']} | Partidos: {p['referee']['matches']}\n"
-                    msg += "\n"
-
+            msg += f"Pick {i}\n{p['match']}\n{p['league']}\n{p['bet']}\nCuota: {p['odd']} | Prob: {p['prob']}% | Valor: +{p['value']}%\n"
+            if p.get("referee"):
+                msg += f"Árbitro: {p['referee']['name']} | AM/p: {p['referee']['avg_yellows']} | Rojas/p: {p['referee']['avg_reds']}\n"
+            msg += "\n"
 
     if new_s:
         msg += "ANALISIS ESTADISTICO\nBusca estas lineas en tu casa de apuestas\n\n"
