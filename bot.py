@@ -28,6 +28,7 @@ LEAGUE_INFO = {
 }
 
 SENT_PICKS_FILE = "/tmp/sent_picks.json"
+REFEREE_FILE = "/tmp/referee_history.json"
 api_cache = {}
 
 def get_current_season():
@@ -75,7 +76,45 @@ def save_sent_picks(picks_set):
             json.dump({"date": today, "picks": list(picks_set)}, f)
     except:
         pass
+        def load_referee_history():
+    try:
+        with open(REFEREE_FILE) as f:
+            return json.load(f)
+    except:
+        return {}
 
+def save_referee_history(data):
+    try:
+        with open(REFEREE_FILE, "w") as f:
+            json.dump(data, f)
+    except:
+        pass
+
+def update_referee(name, yellows, reds):
+    if not name:
+        return
+    data = load_referee_history()
+    if name not in data:
+        data[name] = {"matches": [], "total_yellows": 0, "total_reds": 0, "count": 0}
+    data[name]["matches"].append({"yellows": yellows, "reds": reds})
+    data[name]["total_yellows"] += yellows
+    data[name]["total_reds"] += reds
+    data[name]["count"] += 1
+    save_referee_history(data)
+
+def get_referee_stats(name):
+    if not name:
+        return None
+    data = load_referee_history()
+    if name not in data or data[name]["count"] < 3:
+        return None
+    d = data[name]
+    return {
+        "name": name,
+        "avg_yellows": round(d["total_yellows"] / d["count"], 1),
+        "avg_reds":    round(d["total_reds"] / d["count"], 1),
+        "matches":     d["count"],
+    }
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     for part in [msg[i:i+4000] for i in range(0, len(msg), 4000)]:
@@ -147,18 +186,13 @@ def team_form(tid):
     fx = apif("fixtures", {"team": tid, "last": 8, "season": get_current_season(), "status": "FT"})
     if not fx:
         return None
-    wins, gf, ga, htf = 0, [], [], []
+    wins, gf, ga = 0, [], []
     for f in fx:
         hid = f["teams"]["home"]["id"]
-        hg, ag   = f["goals"]["home"] or 0, f["goals"]["away"] or 0
-        hht, aht = (
-            (f.get("score", {}).get("halftime", {}) or {}).get("home") or 0,
-            (f.get("score", {}).get("halftime", {}) or {}).get("away") or 0,
-        )
+        hg, ag = f["goals"]["home"] or 0, f["goals"]["away"] or 0
         is_home = hid == tid
         gf.append(hg if is_home else ag)
         ga.append(ag if is_home else hg)
-        htf.append(hht if is_home else aht)
         if f["teams"]["home" if is_home else "away"]["winner"]:
             wins += 1
     n = len(fx)
@@ -166,12 +200,11 @@ def team_form(tid):
         "win_rate":      round(wins / n * 100),
         "avg_for":       round(sum(gf) / n, 2),
         "avg_against":   round(sum(ga) / n, 2),
-        "avg_ht_for":    round(sum(htf) / n, 2),
         "goals_list":    gf,
         "conceded_list": ga,
         "sample":        n,
     }
-
+    
 def fixture_corners_cards(tid, n=8):
     if load_req() >= 80:
         return [], [], []
@@ -233,14 +266,11 @@ def analyze_goals(home, away, league_id):
         h2h = apif("fixtures/headtohead", {"h2h": f"{hid}-{aid}", "last": 8, "status": "FT"})
 
     if len(h2h) >= 4:
-        goals, ht_goals, btts, hg_list, ag_list = [], [], [], [], []
+        goals, btts, hg_list, ag_list = [], [], [], []
         for g in h2h:
             hg  = g["goals"]["home"] or 0
             ag  = g["goals"]["away"] or 0
-            hht = (g.get("score", {}).get("halftime", {}) or {}).get("home") or 0
-            aht = (g.get("score", {}).get("halftime", {}) or {}).get("away") or 0
             goals.append(hg + ag)
-            ht_goals.append(hht + aht)
             btts.append(1 if hg > 0 and ag > 0 else 0)
             if g["teams"]["home"]["id"] == hid:
                 hg_list.append(hg); ag_list.append(ag)
@@ -255,7 +285,6 @@ def analyze_goals(home, away, league_id):
             "under25_prob":   under25,
             "over15_prob":    over15,
             "btts_prob":      int(sum(btts) / n * 100),
-            "ht_over15_prob": int(sum(1 for g in ht_goals if g > 1.5) / n * 100),
             "home_goals":     hg_list,
             "away_goals":     ag_list,
             "avg_goals":      round(sum(goals) / n, 1),
@@ -272,7 +301,6 @@ def analyze_goals(home, away, league_id):
     lam_home  = (hf["avg_for"] + af["avg_against"]) / 2
     lam_away  = (af["avg_for"] + hf["avg_against"]) / 2
     lam_total = lam_home + lam_away
-    lam_ht    = (hf.get("avg_ht_for", 0.0) + af.get("avg_ht_for", 0.0)) / 2 * 2
 
     p_home_scores = int((1 - poisson.pmf(0, lam_home)) * 100)
     p_away_scores = int((1 - poisson.pmf(0, lam_away)) * 100)
@@ -282,7 +310,6 @@ def analyze_goals(home, away, league_id):
         "under25_prob":   poisson_prob_under(lam_total, 2.5),
         "over15_prob":    poisson_prob_over(lam_total, 1.5),
         "btts_prob":      int(p_home_scores * p_away_scores / 100),
-        "ht_over15_prob": poisson_prob_over(lam_ht, 1.5),
         "home_goals":     hf.get("goals_list", []),
         "away_goals":     af.get("goals_list", []),
         "home_form":      hf["win_rate"],
@@ -398,11 +425,22 @@ def get_todays_picks():
                 if not bm:
                     continue
                 print(f"[{league_name}] {home} vs {away}")
+                hid = team_id_fuzzy(home, league_id)
+                aid = team_id_fuzzy(away, league_id)
+                referee_name = None
+                ref_stats = None
+                if hid and aid:
+                    fx_data = apif("fixtures", {"team": hid, "next": 1})
+                    if fx_data:
+                        referee_raw = fx_data[0].get("fixture", {}).get("referee") or ""
+                        referee_name = referee_raw.split(",")[0].strip() if referee_raw else None
+                        ref_stats = get_referee_stats(referee_name)
+
 
                 stats = analyze_goals(home, away, league_id)
                 pick  = best_odds_pick(home, away, bm, stats)
                 if pick:
-                    odds_picks.append({"match": f"{home} vs {away}", "league": league_name, **pick})
+                    odds_picks.append({"match": f"{home} vs {away}", "league": league_name, "referee": ref_stats, **pick})
 
                 if stats:
                     for goal_list, label in [
@@ -419,6 +457,14 @@ def get_todays_picks():
                                 })
 
                 cc = analyze_cc(home, away, league_id)
+                if ref_stats and cc.get("cards_avg") is not None:
+                    ref_factor = ref_stats["avg_yellows"] / 3.5
+                    cc["cards_avg"] = round((cc["cards_avg"] + ref_stats["avg_yellows"]) / 2, 1)
+                    if cc.get("cards_total") and cc["cards_total"].get("prob"):
+                        adj = min(10, int((ref_factor - 1) * 15))
+                        cc["cards_total"]["prob"] = min(95, cc["cards_total"]["prob"] + adj)
+                        cc["cards_total"]["bet"] = cc["cards_total"]["bet"] + f" (Árbitro: {ref_stats['name']} {ref_stats['avg_yellows']}AM/p)"
+
                 for field in ["corners_total", "corners_home", "corners_away",
                               "cards_total",   "cards_home",   "cards_away"]:
                     p = cc.get(field)
@@ -470,6 +516,10 @@ def send_picks(odds_picks, stats_picks, title="Picks del dia"):
         for i, p in enumerate(new_o, 1):
             msg += (f"Pick {i}\n{p['match']}\n{p['league']}\n"
                     f"{p['bet']}\nCuota: {p['odd']} | Prob: {p['prob']}% | Valor: +{p['value']}%\n\n")
+                    if p.get("referee"):
+                        msg += f"Árbitro: {p['referee']['name']} | AM/p: {p['referee']['avg_yellows']} | Rojas/p: {p['referee']['avg_reds']} | Partidos: {p['referee']['matches']}\n"
+                    msg += "\n"
+
 
     if new_s:
         msg += "ANALISIS ESTADISTICO\nBusca estas lineas en tu casa de apuestas\n\n"
