@@ -76,7 +76,7 @@ def save_sent_picks(picks_set):
             json.dump({"date": today, "picks": list(picks_set)}, f)
     except:
         pass
-        def load_referee_history():
+def load_referee_history():
     try:
         with open(REFEREE_FILE) as f:
             return json.load(f)
