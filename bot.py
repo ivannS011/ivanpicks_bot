@@ -351,7 +351,7 @@ def analyze_cc(home, away, league_id):
     if len(hk_list) >= MIN_SAMPLE and len(ak_list) >= MIN_SAMPLE:
         avg_k_home = sum(hk_list) / len(hk_list)
         avg_k_away = sum(ak_list) / len(ak_list)
-        card_totals = [round(avg_k_home + avg_k_away)] * max(len(hk_list), len(ak_list)
+        card_totals = [round(avg_k_home + avg_k_away)] * max(len(hk_list), len(ak_list))
         res["cards_total"] = find_best_line(card_totals, CARD_LINES, "tarjetas")
         res["cards_home"]  = find_best_line(hk_list, [0.5, 1.5, 2.5], f"tarjetas ({home})")
         res["cards_away"]  = find_best_line(ak_list, [0.5, 1.5, 2.5], f"tarjetas ({away})")
