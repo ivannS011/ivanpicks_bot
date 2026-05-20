@@ -1,7 +1,6 @@
 import os, requests, time, schedule, json, math
 from datetime import datetime
-from io import StringIO
-import pytz, pandas as pd
+import pytz
 from scipy.stats import poisson
 
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN")
@@ -130,10 +129,6 @@ def find_best_line(values, lines, label):
         over_prob  = int(sum(1 for v in values if v > line) / n * 100)
         under_prob = int(sum(1 for v in values if v < line) / n * 100)
         if over_prob >= MIN_PROB and under_prob >= MIN_PROB:
-            prob = max(over_prob, under_prob)
-            bet  = f"Mas de {line} {label}" if over_prob >= under_prob else f"Menos de {line} {label}"
-            if prob > best_prob:
-                best_prob, best = prob, {"bet": bet, "prob": prob}
             continue
         for prob, bet in [
             (over_prob,  f"Mas de {line} {label}"),
