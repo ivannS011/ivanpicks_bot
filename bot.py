@@ -558,8 +558,8 @@ if __name__ == "__main__":
     print("Bot IvanPicks iniciando...")
     send_telegram("Bot IvanPicks iniciado - Fuentes: Odds API + API-Football")
     daily_analysis()
-    schedule.every().day.at("03:00").do(daily_analysis)
-    schedule.every().day.at("13:00").do(check_new_opportunities)
+    schedule.every().day.at("11:00").do(daily_analysis)
+    schedule.every().day.at("16:00").do(check_new_opportunities)
     while True:
         schedule.run_pending()
         time.sleep(60)
