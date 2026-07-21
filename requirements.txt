@@ -1,5 +1,4 @@
 requests
-schedule
 pytz
 pandas
 scipy
