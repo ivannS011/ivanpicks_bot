@@ -1,4 +1,4 @@
-import os, requests, time, schedule, json, math
+import os, requests, time, json, math
 from datetime import datetime
 import pytz
 from scipy.stats import poisson
@@ -9,7 +9,7 @@ ODDS_API_KEY     = os.environ.get("ODDS_API_KEY")
 API_FOOTBALL_KEY = os.environ.get("API_FOOTBALL_KEY")
 
 TZ            = pytz.timezone("America/Argentina/Buenos_Aires")
-REQUESTS_FILE = "/tmp/api_requests.json"
+REQUESTS_FILE = "/api_requests.json"
 MIN_PROB      = 60
 MIN_SAMPLE    = 5
 MAX_API_REQ   = 90
@@ -26,8 +26,8 @@ LEAGUE_INFO = {
     "soccer_france_ligue_one":           ("🇫🇷 Ligue 1",           61),
 }
 
-SENT_PICKS_FILE = "/tmp/sent_picks.json"
-REFEREE_FILE = "/tmp/referee_history.json"
+SENT_PICKS_FILE = "sent_picks.json"
+REFEREE_FILE = "referee_history.json"
 api_cache = {}
 
 def get_current_season():
@@ -555,11 +555,10 @@ def check_new_opportunities():
         print("[CRON 13:00] Sin picks nuevos")
 
 if __name__ == "__main__":
-    print("Bot IvanPicks iniciando...")
-    send_telegram("Bot IvanPicks iniciado - Fuentes: Odds API + API-Football")
-    daily_analysis()
-    schedule.every().day.at("11:00").do(daily_analysis)
-    schedule.every().day.at("16:00").do(check_new_opportunities)
-    while True:
-        schedule.run_pending()
-        time.sleep(60)
+    import sys
+    mode = sys.argv[1] if len(sys.argv) > 1 else "daily"
+    print(f"Bot IvanPicks - modo: {mode}")
+    if mode == "daily":
+        daily_analysis()
+    elif mode == "check":
+        check_new_opportunities()
